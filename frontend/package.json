@@ -1,0 +1,20 @@
+{
+  "name": "codeops-copilot-web",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "latest",
+    "vite": "latest",
+    "vue": "latest",
+    "vitest": "latest",
+    "@vue/test-utils": "latest",
+    "jsdom": "latest"
+  },
+  "devDependencies": {}
+}

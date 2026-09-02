@@ -1,0 +1,6 @@
+frontend/node_modules/
+frontend/dist/
+backened/target/
+.idea/
+*.iml
+*.log
