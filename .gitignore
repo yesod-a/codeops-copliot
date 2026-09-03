@@ -4,3 +4,8 @@ backened/target/
 .idea/
 *.iml
 *.log
+.env
+llm-backend/.env
+llm-backend/.venv/
+llm-backend/__pycache__/
+llm-backend/.pytest_cache/

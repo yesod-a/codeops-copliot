@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { getReview, scanRepository, submitGitReview, submitReview } from './api/reviewApi.js';
+import { getAiHealth, getReviewDetails, listReviews, saveReview, scanRepository, submitAiReview } from './api/reviewApi.js';
 import FindingList from './components/FindingList.vue';
 import ReviewForm from './components/ReviewForm.vue';
 import ReviewStatus from './components/ReviewStatus.vue';
@@ -17,37 +17,27 @@ const connectionMessage = ref('本地示例');
 const notice = ref('');
 const localGitReview = ref(false);
 const route = ref(getRoute(window.location.hash));
-const reviewHistory = ref(loadReviewHistory());
+const reviewHistory = ref([]);
+const historyLoading = ref(false);
+const historyError = ref('');
+const aiHealth = ref(null);
 let pollingTimer;
 
-function loadReviewHistory() {
+async function loadReviewHistory() {
+  historyLoading.value = true;
+  historyError.value = '';
   try {
-    return JSON.parse(window.localStorage.getItem('codeops-review-history') || '[]');
-  } catch {
-    return [];
+    reviewHistory.value = await listReviews({ limit: 20, offset: 0 });
+  } catch (error) {
+    historyError.value = error.message || '无法加载评审历史。';
+  } finally {
+    historyLoading.value = false;
   }
-}
-
-function saveReviewHistory() {
-  window.localStorage.setItem('codeops-review-history', JSON.stringify(reviewHistory.value.slice(0, 20)));
-}
-
-function rememberReview(review) {
-  const summary = {
-    id: review.id,
-    title: review.title,
-    repository: review.repository,
-    pullRequestNumber: review.pullRequestNumber,
-    status: review.status,
-    updatedAt: review.updatedAt,
-    localGit: localGitReview.value
-  };
-  reviewHistory.value = [summary, ...reviewHistory.value.filter((item) => item.id !== summary.id)].slice(0, 20);
-  saveReviewHistory();
 }
 
 function syncRoute() {
   route.value = getRoute(window.location.hash);
+  if (route.value === 'history') loadReviewHistory();
 }
 
 function goTo(nextRoute) {
@@ -88,59 +78,87 @@ async function handleSubmit(payload) {
   notice.value = '';
   localGitReview.value = payload.mode === 'git';
   try {
-    const created = payload.mode === 'git'
-      ? await submitGitReview(payload)
-      : await submitReview(payload);
-    task.value = created;
-    rememberReview(created);
-    connectionMessage.value = 'API 已连接';
-    await poll(created.id, 0);
-  } catch (error) {
-    if (payload.mode === 'git') {
-      connectionMessage.value = '后端不可用';
-      notice.value = `本地 Git 评审需要 Java 后端：${error.message || '请求失败'}`;
-    } else {
-      task.value = makeLocalPreview(payload);
-      connectionMessage.value = '本地预览';
-      notice.value = '后端暂不可用，当前展示本地预览结果';
+    const aiResponse = await submitAiReview(payload);
+    const aiTask = makeAiTask(payload, aiResponse.findings);
+    task.value = aiTask;
+    connectionMessage.value = 'LLM 已连接';
+
+    try {
+      const saved = await saveReview(buildSavePayload(payload, aiResponse));
+      task.value = saved;
+      await loadReviewHistory();
+    } catch (saveError) {
+      notice.value = `评审已完成，但历史记录保存失败：${saveError.message || '数据库请求失败'}`;
+      return;
     }
+  } catch (error) {
+    connectionMessage.value = '后端不可用';
+    notice.value = `大模型评审服务不可用：${error.message || '请求失败'}`;
   } finally {
     submitting.value = false;
   }
 }
 
-async function poll(id, attempt) {
-  if (attempt >= 10 || ['COMPLETED', 'FAILED'].includes(task.value.status)) return;
-  pollingTimer = window.setTimeout(async () => {
-    try {
-      task.value = await getReview(id);
-      rememberReview(task.value);
-      await poll(id, attempt + 1);
-    } catch (error) {
-      notice.value = '获取评审进度失败，请稍后重试';
-    }
-  }, 700);
+function buildSavePayload(payload, aiResponse) {
+  const files = payload.files.map((file) => ({
+    path: file.path,
+    gitStatus: file.gitStatus ?? null,
+    additions: file.additions ?? 0,
+    deletions: file.deletions ?? 0,
+    patch: file.content ?? '',
+    contentHash: file.contentHash ?? null
+  }));
+  return {
+    requestId: crypto.randomUUID(),
+    repositoryPath: payload.repositoryPath ?? null,
+    repository: payload.repository ?? null,
+    title: payload.title,
+    sourceType: payload.mode === 'git' ? 'GIT' : 'MANUAL',
+    scope: payload.scope ?? null,
+    baseRef: payload.baseRef ?? null,
+    branch: payload.mode === 'git' ? scanResult.value?.branch ?? null : null,
+    headCommit: payload.mode === 'git' ? scanResult.value?.headCommit ?? null : null,
+    modelName: aiHealth.value?.model ?? null,
+    files,
+    findings: aiResponse.findings ?? []
+  };
 }
 
-function makeLocalPreview(payload) {
-  const source = payload.files[0];
-  const findings = [];
-  if (/authorization|password|secret|api[_-]?key/i.test(source.content)) {
-    findings.push({ category: 'SECURITY', severity: 'HIGH', file: source.path, line: 1, message: '代码中可能直接处理敏感认证信息。', suggestion: '使用 Spring Security 的认证主体和安全配置，避免在业务代码中传递原始凭据。', evidence: source.content.split('\n')[0], confidence: 0.96 });
-  }
-  if (/TODO|FIXME/.test(source.content)) {
-    findings.push({ category: 'MAINTAINABILITY', severity: 'LOW', file: source.path, line: 1, message: '变更中包含未完成的 TODO 或 FIXME 标记。', suggestion: '在合并前完成实现，或创建可追踪的 Issue。', evidence: source.content.split('\n').find((line) => /TODO|FIXME/.test(line)) || '', confidence: 0.94 });
-  }
+function makeAiTask(payload, findings) {
+  const now = new Date().toISOString();
+  const repository = payload.repositoryPath ?? payload.repository;
   return {
     ...structuredClone(demoTask),
-    id: `local-${Date.now()}`,
-    repository: payload.repository,
-    pullRequestNumber: payload.pullRequestNumber,
+    id: `ai-${Date.now()}`,
+    repository,
+    pullRequestNumber: 0,
     title: payload.title,
     status: 'COMPLETED',
-    updatedAt: new Date().toISOString(),
-    findings
+    createdAt: now,
+    updatedAt: now,
+    findings: findings ?? [],
+    error: null
   };
+}
+
+async function openHistory(id) {
+  try {
+    const detail = await getReviewDetails(id);
+    task.value = detail;
+    localGitReview.value = detail.sourceType === 'GIT';
+    notice.value = '';
+    goTo('review');
+  } catch (error) {
+    historyError.value = error.message || '无法加载评审详情。';
+  }
+}
+
+async function checkAiHealth() {
+  try {
+    aiHealth.value = await getAiHealth();
+  } catch {
+    aiHealth.value = { status: 'unavailable' };
+  }
 }
 
 function exportMarkdown() {
@@ -172,7 +190,11 @@ function exportMarkdown() {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-onMounted(() => window.addEventListener('hashchange', syncRoute));
+onMounted(() => {
+  window.addEventListener('hashchange', syncRoute);
+  checkAiHealth();
+  loadReviewHistory();
+});
 onBeforeUnmount(() => {
   window.clearTimeout(pollingTimer);
   window.removeEventListener('hashchange', syncRoute);
@@ -197,7 +219,7 @@ onBeforeUnmount(() => {
       <div class="sidebar-footer">
         <div class="model-card">
           <span class="pulse-dot"></span>
-          <div><span>评审引擎</span><strong>模拟 AI v0.1</strong></div>
+          <div><span>评审引擎</span><strong>{{ aiHealth?.status === 'ready' ? 'LangChain 大模型' : 'LLM 服务未启用' }}</strong></div>
         </div>
         <div class="user-card"><span class="avatar">YL</span><div><strong>Yu Li</strong><span>开发者</span></div><span class="more-icon">•••</span></div>
       </div>
@@ -262,13 +284,15 @@ onBeforeUnmount(() => {
 
       <div v-else class="content-wrap">
         <section class="page-intro">
-          <div><p class="eyebrow">评审记录</p><h1>历史记录</h1><p class="intro-copy">查看当前浏览器保存的评审任务。</p></div>
+          <div><p class="eyebrow">评审记录</p><h1>历史记录</h1><p class="intro-copy">查看数据库保存的评审任务。</p></div>
           <button class="secondary-button" type="button" @click="goTo('review')"><span>↗</span>新建评审</button>
         </section>
-        <section v-if="reviewHistory.length" class="history-list">
-          <article v-for="item in reviewHistory" :key="item.id" class="history-item">
-            <div class="history-item-main"><span class="repo-mark">{{ item.localGit ? 'GIT' : 'PR' }}</span><div><strong>{{ item.title }}</strong><span>{{ item.localGit ? '本地 Git' : `拉取请求 #${item.pullRequestNumber}` }} · {{ item.repository }}</span></div></div>
-            <div class="history-item-meta"><span class="status-badge" :class="`tone-${getStatusMeta(item.status).tone}`"><span class="status-dot"></span>{{ getStatusMeta(item.status).label }}</span><time>{{ item.updatedAt ? new Date(item.updatedAt).toLocaleString('zh-CN') : '-' }}</time></div>
+        <p v-if="historyError" class="notice-banner"><span>!</span>{{ historyError }}</p>
+        <p v-else-if="historyLoading" class="scan-message">正在加载评审历史...</p>
+        <section v-else-if="reviewHistory.length" class="history-list">
+          <article v-for="item in reviewHistory" :key="item.id" class="history-item" tabindex="0" @click="openHistory(item.id)" @keydown.enter="openHistory(item.id)">
+            <div class="history-item-main"><span class="repo-mark">{{ item.sourceType === 'GIT' ? 'GIT' : 'PR' }}</span><div><strong>{{ item.title }}</strong><span>{{ item.sourceType === 'GIT' ? '本地 Git' : '手动评审' }} · {{ item.repository }}</span></div></div>
+            <div class="history-item-meta"><span class="status-badge" :class="`tone-${getStatusMeta(item.status).tone}`"><span class="status-dot"></span>{{ getStatusMeta(item.status).label }}</span><time>{{ item.completedAt || item.createdAt ? new Date(item.completedAt || item.createdAt).toLocaleString('zh-CN') : '-' }}</time></div>
           </article>
         </section>
         <div v-else class="empty-state history-empty"><span class="empty-icon">◷</span><strong>暂无评审记录</strong><span>提交一次本地 Git 或手动评审后，记录会显示在这里。</span><button class="primary-button" type="button" @click="goTo('review')">创建第一条评审</button></div>

@@ -4,53 +4,64 @@ import com.codeops.copilot.review.git.GitRepositoryService;
 import com.codeops.copilot.review.git.GitReviewException;
 import com.codeops.copilot.review.git.GitScope;
 import com.codeops.copilot.review.git.RepositorySnapshot;
+import com.codeops.copilot.review.persistence.ReviewHistoryService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicLong;
 
 @RestController
 @RequestMapping("/api")
 public class ReviewController {
-    private final ReviewService reviewService;
+    private final ReviewHistoryService historyService;
     private final GitRepositoryService repositoryService;
-    private final AtomicLong localRunNumber = new AtomicLong(System.currentTimeMillis());
 
-    public ReviewController(ReviewService reviewService, GitRepositoryService repositoryService) {
-        this.reviewService = reviewService;
+    public ReviewController(ReviewHistoryService historyService, GitRepositoryService repositoryService) {
+        this.historyService = historyService;
         this.repositoryService = repositoryService;
     }
 
     @PostMapping("/reviews")
-    @ResponseStatus(HttpStatus.ACCEPTED)
-    public ReviewTask submit(@Valid @RequestBody SubmitReviewRequest request) {
-        ReviewTask task = reviewService.submit(request.toDomain());
-        reviewService.processAsync(task.id());
-        return task;
+    public ReviewHistoryService.ReviewHistoryView save(@Valid @RequestBody SaveReviewRequest request) {
+        return historyService.save(request.toCommand());
+    }
+
+    @GetMapping("/reviews")
+    public List<ReviewHistoryService.ReviewHistorySummary> list(
+            @RequestParam(defaultValue = "20") @Min(1) int limit,
+            @RequestParam(defaultValue = "0") @PositiveOrZero int offset) {
+        return historyService.list(limit, offset);
     }
 
     @GetMapping("/reviews/{id}")
-    public ReviewTask get(@PathVariable UUID id) {
-        return reviewService.get(id);
+    public ReviewHistoryService.ReviewHistoryView get(@PathVariable UUID id) {
+        return historyService.get(id);
     }
 
-    @PostMapping("/reviews/{id}/process")
-    public ReviewTask process(@PathVariable UUID id) {
-        return reviewService.process(id);
+    @DeleteMapping("/reviews/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable UUID id) {
+        historyService.delete(id);
     }
 
     @PostMapping("/repositories/scan")
@@ -58,19 +69,9 @@ public class ReviewController {
         return repositoryService.scan(java.nio.file.Path.of(request.repositoryPath()), request.scope(), request.baseRef());
     }
 
-    @PostMapping("/reviews/from-git")
-    @ResponseStatus(HttpStatus.ACCEPTED)
-    public ReviewTask submitFromGit(@Valid @RequestBody SubmitGitReviewRequest request) {
-        List<ChangedFile> files = repositoryService.readSelected(java.nio.file.Path.of(request.repositoryPath()),
-                request.scope(), request.baseRef(), request.files());
-        ReviewTask task = reviewService.submit(new ReviewRequest(request.repositoryPath(), nextLocalRunNumber(), request.title(), files));
-        reviewService.processAsync(task.id());
-        return task;
-    }
-
-    @ExceptionHandler(ReviewService.ReviewNotFoundException.class)
+    @ExceptionHandler(ReviewHistoryService.ReviewNotFoundException.class)
     @ResponseStatus(HttpStatus.NOT_FOUND)
-    public ErrorResponse notFound(ReviewService.ReviewNotFoundException exception) {
+    public ErrorResponse notFound(ReviewHistoryService.ReviewNotFoundException exception) {
         return new ErrorResponse(exception.getMessage());
     }
 
@@ -80,41 +81,73 @@ public class ReviewController {
         return new ErrorResponse(exception.getMessage());
     }
 
-    private long nextLocalRunNumber() {
-        return localRunNumber.incrementAndGet();
+    @ExceptionHandler(DataAccessException.class)
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    public ErrorResponse databaseFailure(DataAccessException exception) {
+        return new ErrorResponse("评审历史数据库暂不可用");
     }
 
-    public record SubmitReviewRequest(
-            @NotBlank String repository,
-            @Positive long pullRequestNumber,
+    public record SaveReviewRequest(
+            @NotNull UUID requestId,
+            String repositoryPath,
+            String repository,
             @NotBlank String title,
-            @NotEmpty List<ChangedFileRequest> files
+            @NotBlank String sourceType,
+            String scope,
+            String baseRef,
+            String branch,
+            String headCommit,
+            String modelName,
+            @NotEmpty List<@Valid ReviewFileRequest> files,
+            List<@Valid ReviewFindingRequest> findings
     ) {
-        ReviewRequest toDomain() {
-            return new ReviewRequest(repository, pullRequestNumber, title,
-                    files.stream().map(file -> new ChangedFile(file.path(), file.content())).toList());
+        ReviewHistoryService.SaveReviewCommand toCommand() {
+            return new ReviewHistoryService.SaveReviewCommand(
+                    requestId, repositoryPath, repository, title, sourceType, scope, baseRef, branch,
+                    headCommit, modelName,
+                    files.stream().map(ReviewFileRequest::toCommand).toList(),
+                    findings == null ? List.of() : findings.stream().map(ReviewFindingRequest::toCommand).toList());
         }
     }
 
-    public record ChangedFileRequest(@NotBlank String path, String content) {
-        public ChangedFileRequest {
-            content = content == null ? "" : content;
+    public record ReviewFileRequest(
+            @NotBlank String path,
+            String gitStatus,
+            @PositiveOrZero int additions,
+            @PositiveOrZero int deletions,
+            String patch,
+            String contentHash
+    ) {
+        public ReviewFileRequest {
+            patch = patch == null ? "" : patch;
+        }
+
+        ReviewHistoryService.FileCommand toCommand() {
+            return new ReviewHistoryService.FileCommand(path, gitStatus, additions, deletions, patch, contentHash);
+        }
+    }
+
+    public record ReviewFindingRequest(
+            @NotBlank String file,
+            @NotBlank String category,
+            @NotNull Severity severity,
+            @Positive int line,
+            @NotBlank String message,
+            @NotBlank String suggestion,
+            String evidence,
+            @DecimalMin("0.0") @DecimalMax("1.0") double confidence
+    ) {
+        public ReviewFindingRequest {
+            evidence = evidence == null ? "" : evidence;
+        }
+
+        ReviewHistoryService.FindingCommand toCommand() {
+            return new ReviewHistoryService.FindingCommand(
+                    file, category, severity, line, message, suggestion, evidence, confidence);
         }
     }
 
     public record RepositoryScanRequest(@NotBlank String repositoryPath, @NotNull GitScope scope, String baseRef) {
-    }
-
-    public record SubmitGitReviewRequest(
-            @NotBlank String repositoryPath,
-            @NotNull GitScope scope,
-            String baseRef,
-            @NotBlank String title,
-            @NotEmpty List<@NotBlank String> files
-    ) {
-        public SubmitGitReviewRequest {
-            files = List.copyOf(files);
-        }
     }
 
     public record ErrorResponse(String message) {

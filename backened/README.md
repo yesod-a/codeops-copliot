@@ -1,88 +1,48 @@
-# CodeOps Copilot
+# CodeOps Copilot Java Backend
 
-CodeOps Copilot is a Spring Boot MVP for AI-assisted Java pull request reviews.
-The first version demonstrates the core workflow locally without requiring a GitHub token or an LLM API key:
+Java 服务负责本机 Git 仓库扫描，以及将 Python LangChain 服务返回的评审结果保存到 MySQL。大模型推理由 `llm-backend` 完成，Java 不再执行评审推理。
+
+## API
 
 ```text
-POST /api/reviews -> PENDING -> async processing -> GET /api/reviews/{id}
+POST   /api/repositories/scan
+POST   /api/reviews
+GET    /api/reviews?limit=20&offset=0
+GET    /api/reviews/{id}
+DELETE /api/reviews/{id}
 ```
 
-The review pipeline combines deterministic rules with a replaceable `AiReviewer` interface:
+`POST /api/reviews` 是持久化接口：前端先调用 `POST /api/ai/review` 获取 findings，再把评审元数据、补丁和 findings 提交到 Java。该接口不会再次调用 LLM。
 
-- `SensitiveDataRule` detects credentials and authorization values.
-- `TodoCommentRule` detects unresolved TODO/FIXME markers.
-- `SimulatedAiReviewer` demonstrates architecture and maintainability findings.
-- `ReviewTaskRepository` is currently in-memory and can later be replaced with PostgreSQL.
+## 数据库
 
-## Run
+服务使用 MySQL 8 和 Flyway。启动时会自动执行 `V1__create_review_history.sql`，创建：
 
-Requires Java 21 and Maven 3.9+.
+- `projects`
+- `reviews`
+- `review_files`
+- `review_findings`
+
+Docker 默认连接：`127.0.0.1:3307/codeops`（容器内部端口仍为 `3306`），可通过 `MYSQL_PORT` 或 `SPRING_DATASOURCE_URL` 覆盖。
+
+## 启动
+
+推荐从项目根目录启动 MySQL、LLM、前端和本机 Java：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-local-stack.ps1
+```
+
+也可以单独运行 Java，但需要先启动 MySQL：
 
 ```powershell
 mvn spring-boot:run
 ```
 
-## Demo
+Java 直接运行在 Windows 宿主机，因此 Git 扫描支持本机任意现有仓库路径。
 
-```powershell
-$body = @'
-{
-  "repository": "acme/order-service",
-  "pullRequestNumber": 42,
-  "title": "Add payment endpoint",
-  "files": [
-    {
-      "path": "PaymentController.java",
-      "content": "String token = request.getHeader(\"Authorization\");\\n// TODO add validation"
-    }
-  ]
-}
-'@
-$task = Invoke-RestMethod -Method Post -Uri http://localhost:8080/api/reviews -ContentType 'application/json' -Body $body
-Invoke-RestMethod -Uri "http://localhost:8080/api/reviews/$($task.id)"
-```
-
-## Local Git review
-
-The Vue frontend and Java backend are intended to run on the same machine for this workflow. The backend process must be able to access the local repository path because it runs the Git commands and reads the selected files. Windows paths can be sent as JSON with escaped backslashes, or as forward-slash paths such as `D:/development/project/my_learn`.
-
-Scan the working tree before submitting selected files:
-
-```powershell
-$scanBody = @{
-  repositoryPath = 'D:/development/project/my_learn'
-  scope = 'WORKTREE'
-  baseRef = $null
-} | ConvertTo-Json
-$scan = Invoke-RestMethod -Method Post -Uri http://localhost:8080/api/repositories/scan `
-  -ContentType 'application/json' -Body $scanBody
-```
-
-For a comparison against a branch or commit, use `scope = 'BASE_COMMIT'` and provide a non-empty `baseRef`. Submit only relative paths returned by the scan:
-
-```powershell
-$reviewBody = @{
-  repositoryPath = 'D:/development/project/my_learn'
-  scope = 'WORKTREE'
-  baseRef = $null
-  title = 'Review selected local changes'
-  files = @('frontend/src/App.vue')
-} | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri http://localhost:8080/api/reviews/from-git `
-  -ContentType 'application/json' -Body $reviewBody
-```
-
-The current engine is intentionally a local MVP: deterministic rules plus `SimulatedAiReviewer`. It does not call a production LLM yet. The Git scan and selected-file submission are real; only the review reasoning remains simulated until an `AiReviewer` implementation is connected.
-
-## Test
+## 测试
 
 ```powershell
 mvn test
 ```
-
-## Next milestones
-
-1. Replace the simulated reviewer with Spring AI and structured model output.
-2. Add PostgreSQL/pgvector for project standards and historical PR retrieval.
-3. Add GitHub webhook signature verification and PR comment publishing.
-4. Move task execution to Kafka or RabbitMQ with retry and dead-letter handling.

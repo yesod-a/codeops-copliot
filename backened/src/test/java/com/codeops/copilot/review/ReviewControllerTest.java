@@ -5,6 +5,7 @@ import com.codeops.copilot.review.git.GitFileStatus;
 import com.codeops.copilot.review.git.GitRepositoryService;
 import com.codeops.copilot.review.git.GitScope;
 import com.codeops.copilot.review.git.RepositorySnapshot;
+import com.codeops.copilot.review.persistence.ReviewHistoryService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +14,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -21,6 +23,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -35,32 +39,60 @@ class ReviewControllerTest {
     private ObjectMapper objectMapper;
 
     @MockBean
-    private ReviewService reviewService;
+    private ReviewHistoryService historyService;
 
     @MockBean
     private GitRepositoryService repositoryService;
 
     @Test
-    void acceptsReviewRequestAndStartsAsyncProcessing() throws Exception {
-        UUID taskId = UUID.randomUUID();
-        ReviewTask task = new ReviewTask(taskId, "acme/order-service", 42L, "Review payment",
-                List.of(new ChangedFile("PaymentService.java", "return true;")), ReviewStatus.PENDING,
-                List.of(), java.time.Instant.now(), java.time.Instant.now(), null);
-        when(reviewService.submit(any(ReviewRequest.class))).thenReturn(task);
+    void savesCompletedReviewWithoutStartingAnAsyncTask() throws Exception {
+        UUID id = UUID.randomUUID();
+        ReviewHistoryService.ReviewHistoryView view = view(id);
+        when(historyService.save(any(ReviewHistoryService.SaveReviewCommand.class))).thenReturn(view);
 
-        String body = objectMapper.writeValueAsString(new ReviewController.SubmitReviewRequest(
-                "acme/order-service", 42L, "Review payment",
-                List.of(new ReviewController.ChangedFileRequest("PaymentService.java", "return true;"))
-        ));
+        String body = objectMapper.writeValueAsString(new ReviewController.SaveReviewRequest(
+                UUID.randomUUID(), "C:/repo", null, "Review changes", "GIT", "WORKTREE", null,
+                "main", "a".repeat(40), "gpt-4o-mini", List.of(
+                new ReviewController.ReviewFileRequest("src/App.java", "MODIFIED", 2, 1, "@@", "hash")
+        ), List.of()));
 
         mockMvc.perform(post("/api/reviews")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
-                .andExpect(status().isAccepted())
-                .andExpect(jsonPath("$.id").value(taskId.toString()))
-                .andExpect(jsonPath("$.status").value("PENDING"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id.toString()))
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.files[0].path").value("src/App.java"));
 
-        verify(reviewService).processAsync(eq(taskId));
+        verify(historyService).save(any(ReviewHistoryService.SaveReviewCommand.class));
+    }
+
+    @Test
+    void listsReviewSummaries() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(historyService.list(20, 0)).thenReturn(List.of(new ReviewHistoryService.ReviewHistorySummary(
+                id, "Review changes", "C:/repo", "GIT", "COMPLETED", 85, 1,
+                LocalDateTime.now(), LocalDateTime.now())));
+
+        mockMvc.perform(get("/api/reviews").param("limit", "20").param("offset", "0"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(id.toString()))
+                .andExpect(jsonPath("$[0].findingCount").value(1));
+    }
+
+    @Test
+    void getsAndDeletesReviewDetails() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(historyService.get(id)).thenReturn(view(id));
+
+        mockMvc.perform(get("/api/reviews/{id}", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.repository").value("C:/repo"));
+
+        mockMvc.perform(delete("/api/reviews/{id}", id))
+                .andExpect(status().isNoContent());
+
+        verify(historyService).delete(id);
     }
 
     @Test
@@ -76,28 +108,15 @@ class ReviewControllerTest {
                         .content("{\"repositoryPath\":\"C:\\\\repo\",\"scope\":\"WORKTREE\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.branch").value("main"))
-                .andExpect(jsonPath("$.files[0].path").value("src/App.java"))
-                .andExpect(jsonPath("$.files[0].additions").value(2));
+                .andExpect(jsonPath("$.files[0].path").value("src/App.java"));
     }
 
-    @Test
-    void submitsOnlySelectedGitFiles() throws Exception {
-        UUID taskId = UUID.randomUUID();
-        ReviewTask task = new ReviewTask(taskId, "C:/repo", 123L, "Review local changes",
-                List.of(new ChangedFile("src/App.java", "+class App {}")), ReviewStatus.PENDING,
-                List.of(), java.time.Instant.now(), java.time.Instant.now(), null);
-        when(repositoryService.readSelected(any(), eq(GitScope.WORKTREE), isNull(), eq(List.of("src/App.java"))))
-                .thenReturn(List.of(new ChangedFile("src/App.java", "+class App {}")));
-        when(reviewService.submit(any(ReviewRequest.class))).thenReturn(task);
-
-        mockMvc.perform(post("/api/reviews/from-git")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"repositoryPath\":\"C:\\\\repo\",\"scope\":\"WORKTREE\",\"title\":\"Review local changes\",\"files\":[\"src/App.java\"]}"))
-                .andExpect(status().isAccepted())
-                .andExpect(jsonPath("$.id").value(taskId.toString()));
-
-        verify(reviewService).submit(org.mockito.ArgumentMatchers.argThat(request -> request.files().size() == 1
-                && request.files().getFirst().path().equals("src/App.java")));
-        verify(reviewService).processAsync(taskId);
+    private ReviewHistoryService.ReviewHistoryView view(UUID id) {
+        return new ReviewHistoryService.ReviewHistoryView(
+                id, "C:/repo", "Review changes", "GIT", "WORKTREE", null, "main", "a".repeat(40),
+                "COMPLETED", "gpt-4o-mini", 85, 1, null, LocalDateTime.now(), LocalDateTime.now(),
+                List.of(new ReviewHistoryService.ReviewFileView("src/App.java", "MODIFIED", 2, 1, "@@", "hash")),
+                List.of(new ReviewFinding("SECURITY", Severity.HIGH, "src/App.java", 2,
+                        "问题", "建议", "证据", 0.95)));
     }
 }

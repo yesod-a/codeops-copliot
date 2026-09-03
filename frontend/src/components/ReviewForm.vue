@@ -79,13 +79,23 @@ function submitGitReview() {
     return;
   }
   validationMessage.value = '';
+  const selectedFiles = changedFiles.value
+    .filter((file) => selectedPaths.value.includes(file.path))
+    .map((file) => ({
+      path: file.path,
+      content: file.patch || '',
+      gitStatus: file.status,
+      additions: file.additions ?? 0,
+      deletions: file.deletions ?? 0,
+      contentHash: null
+    }));
   emit('submit', {
     mode: 'git',
     repositoryPath: gitForm.repositoryPath.trim(),
     scope: gitForm.scope,
     baseRef: gitForm.scope === 'BASE_COMMIT' ? gitForm.baseRef.trim() : null,
     title: gitForm.title.trim(),
-    files: selectedPaths.value
+    files: selectedFiles
   });
 }
 
