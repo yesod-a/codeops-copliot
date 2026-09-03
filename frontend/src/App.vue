@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref } from 'vue';
-import { getReview, submitReview } from './api/reviewApi.js';
+import { getReview, scanRepository, submitGitReview, submitReview } from './api/reviewApi.js';
 import FindingList from './components/FindingList.vue';
 import ReviewForm from './components/ReviewForm.vue';
 import ReviewStatus from './components/ReviewStatus.vue';
@@ -9,6 +9,9 @@ import { calculateRiskScore, demoTask, getFindingCounts, getStatusMeta } from '.
 const task = ref(structuredClone(demoTask));
 const activeFilter = ref('ALL');
 const submitting = ref(false);
+const scanning = ref(false);
+const scanResult = ref(null);
+const scanError = ref('');
 const connectionMessage = ref('本地示例');
 const notice = ref('');
 let pollingTimer;
@@ -25,19 +28,41 @@ function loadDemo() {
   notice.value = '';
 }
 
+async function handleScan(payload) {
+  scanning.value = true;
+  scanError.value = '';
+  try {
+    scanResult.value = await scanRepository(payload);
+    connectionMessage.value = 'API 已连接';
+  } catch (error) {
+    scanResult.value = null;
+    scanError.value = error.message || 'Unable to scan the local repository.';
+    connectionMessage.value = '后端不可用';
+  } finally {
+    scanning.value = false;
+  }
+}
+
 async function handleSubmit(payload) {
   window.clearTimeout(pollingTimer);
   submitting.value = true;
   notice.value = '';
   try {
-    const created = await submitReview(payload);
+    const created = payload.mode === 'git'
+      ? await submitGitReview(payload)
+      : await submitReview(payload);
     task.value = created;
     connectionMessage.value = 'API 已连接';
     await poll(created.id, 0);
   } catch (error) {
-    task.value = makeLocalPreview(payload);
-    connectionMessage.value = '本地预览';
-    notice.value = '后端暂不可用，当前展示本地预览结果';
+    if (payload.mode === 'git') {
+      connectionMessage.value = '后端不可用';
+      notice.value = `Git review requires the local Java backend: ${error.message || 'request failed'}`;
+    } else {
+      task.value = makeLocalPreview(payload);
+      connectionMessage.value = '本地预览';
+      notice.value = '后端暂不可用，当前展示本地预览结果';
+    }
   } finally {
     submitting.value = false;
   }
@@ -150,7 +175,15 @@ onBeforeUnmount(() => window.clearTimeout(pollingTimer));
         </section>
 
         <section class="workspace-grid">
-          <ReviewForm :submitting="submitting" @submit="handleSubmit" @load-demo="loadDemo" />
+          <ReviewForm
+            :submitting="submitting"
+            :scanning="scanning"
+            :scan-result="scanResult"
+            :scan-error="scanError"
+            @scan="handleScan"
+            @submit="handleSubmit"
+            @load-demo="loadDemo"
+          />
           <ReviewStatus :task="task" />
         </section>
 
