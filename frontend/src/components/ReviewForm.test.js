@@ -3,6 +3,19 @@ import { describe, expect, it } from 'vitest';
 import ReviewForm from './ReviewForm.vue';
 
 describe('ReviewForm', () => {
+  it('emits the selected imported project', async () => {
+    const wrapper = mount(ReviewForm, {
+      props: {
+        projects: [{ id: 7, name: '订单服务', repositoryPath: 'D:/order-service' }],
+        selectedProjectId: ''
+      }
+    });
+
+    await wrapper.get('[data-testid="project-selector"]').setValue('7');
+
+    expect(wrapper.emitted('project-change')[0][0]).toBe(7);
+  });
+
   it('keeps git submission disabled until one supported file is selected', async () => {
     const wrapper = mount(ReviewForm, {
       props: {

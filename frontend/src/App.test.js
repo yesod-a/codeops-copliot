@@ -13,6 +13,7 @@ describe('App history persistence', () => {
     const getItem = vi.spyOn(Storage.prototype, 'getItem');
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'ready', model: 'gpt-4o-mini' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify([{
         id: 'review-1', title: '数据库评审', repository: 'C:/repo', sourceType: 'GIT',
         status: 'COMPLETED', findingCount: 0, riskScore: 100, createdAt: '2026-09-03T08:00:00Z'
@@ -26,7 +27,7 @@ describe('App history persistence', () => {
     await flushPromises();
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      '/api/ai/health', '/api/reviews?limit=20&offset=0'
+      '/api/ai/health', '/api/projects', '/api/reviews?limit=20&offset=0'
     ]);
     expect(getItem).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain('数据库评审');

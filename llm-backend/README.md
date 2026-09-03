@@ -1,6 +1,6 @@
 # CodeOps LLM Backend
 
-这是 CodeOps Copilot 的 Python LangChain 评审服务。Java 后端负责本地 Git 扫描、任务状态和确定性规则，本服务负责调用 OpenAI 兼容的大模型并返回结构化评审意见。
+这是 CodeOps Copilot 的 Python LangChain 评审服务。本服务负责调用 OpenAI 兼容的大模型并返回结构化评审意见，前端和本地 `pre-push` Hook 都可以直接调用它。Java 后端只负责本机 Git 扫描、MySQL 持久化和历史查询。
 
 ## 环境要求
 
@@ -39,10 +39,10 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8090
 docker compose up --build
 ```
 
-容器辅助部署时，前端地址为 `http://localhost:5173`，Python 服务运行在 Docker 中并暴露到宿主机 `8090`；Java 在宿主机运行并通过 `http://127.0.0.1:8090` 调用它。
+容器辅助部署时，前端地址为 `http://localhost:5173`，Python 服务运行在 Docker 中并暴露到宿主机 `8090`；前端和本地 `pre-push` Hook 通过 `http://127.0.0.1:8090` 调用它。
 
 健康检查：`http://127.0.0.1:8090/api/ai/health`。通过 Vite 前端开发服务器访问时，对应地址是 `http://localhost:5173/api/ai/health`，该路径会被转发到 8090，不经过 Java。
 
-启动顺序建议为：配置并启动本服务，启动 Java 后端并设置 `AI_BACKEND_ENABLED=true`，最后启动前端。Java 后端默认通过 `http://127.0.0.1:8090` 调用本服务。
+启动顺序建议为：配置并启动本服务，启动 Java 后端，最后启动前端。安装 `pre-push` Hook 后，它也会使用本服务进行推送前评审。
 
-当 `AI_ENABLED=false` 或 Java 的 `AI_BACKEND_ENABLED=false` 时，评审不会调用大模型。启用 Java 调用但 Python 服务不可用时，评审任务会进入 `FAILED`，不会伪造 AI 结果。
+当 `AI_ENABLED=false` 时，评审接口会返回服务不可用，不会伪造 AI 结果。

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { deleteReview, getAiHealth, getReviewDetails, listReviews, saveReview, scanRepository, submitAiReview } from './reviewApi.js';
+import { deleteReview, getAiHealth, getReviewDetails, importProject, listProjects, listReviews, saveReview, scanRepository, submitAiReview, updateProjectPolicy } from './reviewApi.js';
 
 describe('local Git review API', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -74,5 +74,21 @@ describe('local Git review API', () => {
       '/api/reviews', '/api/reviews?limit=20&offset=0', '/api/reviews/review-1', '/api/reviews/review-1'
     ]);
     expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+  });
+
+  it('manages imported projects and database-backed policies', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 1 }]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 1 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 1 }), { status: 200 }));
+
+    await listProjects();
+    await importProject('D:/repo');
+    await updateProjectPolicy(1, { enabled: true, prePushEnabled: false });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/projects', '/api/projects/import', '/api/projects/1/policy'
+    ]);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ repositoryPath: 'D:/repo' });
   });
 });

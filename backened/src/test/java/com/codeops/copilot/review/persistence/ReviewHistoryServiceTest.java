@@ -58,4 +58,20 @@ class ReviewHistoryServiceTest {
 
         assertThat(service.list(20, 0)).isEmpty();
     }
+
+    @Test
+    void normalizesWindowsRepositoryPathsBeforeFindingOrCreatingProject() {
+        UUID firstRequest = UUID.randomUUID();
+        UUID secondRequest = UUID.randomUUID();
+
+        service.save(new ReviewHistoryService.SaveReviewCommand(
+                firstRequest, "D:/development/repository", "repository", "First review", "GIT", "WORKTREE", null,
+                "main", "a".repeat(40), "gpt-4o-mini", List.of(), List.of()));
+        ReviewHistoryService.ReviewHistoryView second = service.save(new ReviewHistoryService.SaveReviewCommand(
+                secondRequest, "D:\\development\\repository", "repository", "Second review", "GIT", "WORKTREE", null,
+                "main", "b".repeat(40), "gpt-4o-mini", List.of(), List.of()));
+
+        assertThat(service.list(20, 0)).hasSize(2);
+        assertThat(service.get(second.id()).repository()).isEqualTo("D:/development/repository");
+    }
 }

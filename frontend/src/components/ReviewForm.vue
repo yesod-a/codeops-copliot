@@ -2,12 +2,14 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { getGitStatusLabel, getSelectableGitFiles, toggleAllGitFiles, toggleGitFile } from '../reviewState.js';
 
-const emit = defineEmits(['scan', 'submit', 'load-demo']);
+const emit = defineEmits(['scan', 'submit', 'load-demo', 'project-change']);
 const props = defineProps({
   submitting: Boolean,
   scanning: Boolean,
   scanError: { type: String, default: '' },
-  scanResult: { type: Object, default: null }
+  scanResult: { type: Object, default: null },
+  projects: { type: Array, default: () => [] },
+  selectedProjectId: { type: [String, Number], default: '' }
 });
 
 const demoForm = {
@@ -34,6 +36,11 @@ watch(() => props.scanResult, () => {
   validationMessage.value = '';
 });
 
+watch(() => props.selectedProjectId, (projectId) => {
+  const project = props.projects.find((item) => String(item.id) === String(projectId));
+  if (project?.repositoryPath) gitForm.repositoryPath = project.repositoryPath;
+});
+
 function fileTestId(path) {
   return `file-checkbox-${path.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
 }
@@ -41,6 +48,13 @@ function fileTestId(path) {
 function selectMode(nextMode) {
   mode.value = nextMode;
   validationMessage.value = '';
+}
+
+function selectProject(event) {
+  const value = event.target.value;
+  emit('project-change', value ? Number(value) : null);
+  const project = props.projects.find((item) => String(item.id) === value);
+  if (project?.repositoryPath) gitForm.repositoryPath = project.repositoryPath;
 }
 
 function scan() {
@@ -106,6 +120,7 @@ function submitManualReview() {
   }
   validationMessage.value = '';
   emit('submit', {
+    repositoryPath: props.projects.find((project) => String(project.id) === String(props.selectedProjectId))?.repositoryPath ?? null,
     repository: form.repository.trim(),
     pullRequestNumber: Number(form.pullRequestNumber),
     title: form.title.trim(),
@@ -134,6 +149,14 @@ function loadDemo() {
       <button data-testid="mode-git" type="button" :class="{ selected: mode === 'git' }" @click="selectMode('git')">本地 Git</button>
       <button data-testid="mode-manual" type="button" :class="{ selected: mode === 'manual' }" @click="selectMode('manual')">手动粘贴</button>
     </div>
+
+    <label v-if="props.projects.length" class="field project-selector-field">
+      <span>评审项目</span>
+      <select data-testid="project-selector" :value="props.selectedProjectId" @change="selectProject">
+        <option value="">选择已引入项目</option>
+        <option v-for="project in props.projects" :key="project.id" :value="project.id">{{ project.name }}</option>
+      </select>
+    </label>
 
     <form v-if="mode === 'git'" class="review-form git-review-form" novalidate @submit.prevent="submitGitReview">
       <div class="git-scan-grid">

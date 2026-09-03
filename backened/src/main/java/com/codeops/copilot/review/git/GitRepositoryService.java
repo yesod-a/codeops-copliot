@@ -145,7 +145,11 @@ public class GitRepositoryService {
         return normalized;
     }
 
-    private Path resolveRepositoryRoot(Path requestedPath) {
+    public Path resolveRepositoryRoot(Path repositoryPath) {
+        return resolveRepositoryRootFromNormalized(normalizeDirectory(repositoryPath));
+    }
+
+    private Path resolveRepositoryRootFromNormalized(Path requestedPath) {
         String rootValue = runRequired(requestedPath, List.of("rev-parse", "--show-toplevel")).strip();
         if (rootValue.isBlank()) {
             throw new GitReviewException("The directory is not a Git work tree");

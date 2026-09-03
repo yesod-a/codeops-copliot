@@ -27,6 +27,28 @@ export function scanRepository(payload) {
   return request('/api/repositories/scan', { method: 'POST', body: JSON.stringify(payload) });
 }
 
+export function listProjects() {
+  return request('/api/projects');
+}
+
+export function importProject(repositoryPath) {
+  return request('/api/projects/import', {
+    method: 'POST',
+    body: JSON.stringify({ repositoryPath })
+  });
+}
+
+export function updateProjectPolicy(id, policy) {
+  return request(`/api/projects/${id}/policy`, {
+    method: 'PUT',
+    body: JSON.stringify(policy)
+  });
+}
+
+export function deleteProject(id) {
+  return request(`/api/projects/${id}`, { method: 'DELETE' });
+}
+
 export function submitAiReview(payload) {
   return request('/api/ai/review', {
     method: 'POST',

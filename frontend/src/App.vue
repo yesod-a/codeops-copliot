@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { getAiHealth, getReviewDetails, listReviews, saveReview, scanRepository, submitAiReview } from './api/reviewApi.js';
+import { deleteProject, getAiHealth, getReviewDetails, importProject, listProjects, listReviews, saveReview, scanRepository, submitAiReview, updateProjectPolicy } from './api/reviewApi.js';
 import FindingList from './components/FindingList.vue';
 import ReviewForm from './components/ReviewForm.vue';
 import ReviewStatus from './components/ReviewStatus.vue';
@@ -21,7 +21,75 @@ const reviewHistory = ref([]);
 const historyLoading = ref(false);
 const historyError = ref('');
 const aiHealth = ref(null);
+const projects = ref([]);
+const projectsLoading = ref(false);
+const projectError = ref('');
+const projectPathInput = ref('');
+const selectedProjectId = ref('');
+const policySaving = ref(false);
 let pollingTimer;
+
+const selectedProject = computed(() => projects.value.find((project) => String(project.id) === String(selectedProjectId.value)) ?? null);
+
+async function loadProjects() {
+  projectsLoading.value = true;
+  projectError.value = '';
+  try {
+    projects.value = await listProjects();
+    if (selectedProjectId.value && !selectedProject.value) selectedProjectId.value = '';
+  } catch (error) {
+    projectError.value = error.message || '无法加载项目列表。';
+  } finally {
+    projectsLoading.value = false;
+  }
+}
+
+async function handleImportProject() {
+  if (!projectPathInput.value.trim()) {
+    projectError.value = '请输入本机 Git 仓库路径。';
+    return;
+  }
+  projectsLoading.value = true;
+  projectError.value = '';
+  try {
+    const project = await importProject(projectPathInput.value.trim());
+    await loadProjects();
+    selectedProjectId.value = project.id;
+    projectPathInput.value = project.repositoryPath;
+  } catch (error) {
+    projectError.value = error.message || '项目引入失败。';
+  } finally {
+    projectsLoading.value = false;
+  }
+}
+
+async function handlePolicySave(project) {
+  policySaving.value = true;
+  projectError.value = '';
+  try {
+    const saved = await updateProjectPolicy(project.id, project.policy);
+    projects.value = projects.value.map((item) => item.id === saved.id ? saved : item);
+  } catch (error) {
+    projectError.value = error.message || '策略保存失败。';
+  } finally {
+    policySaving.value = false;
+  }
+}
+
+async function handleProjectDelete(project) {
+  if (!window.confirm(`确认删除项目“${project.name}”及其评审历史吗？`)) return;
+  try {
+    await deleteProject(project.id);
+    projects.value = projects.value.filter((item) => item.id !== project.id);
+    if (String(selectedProjectId.value) === String(project.id)) selectedProjectId.value = '';
+  } catch (error) {
+    projectError.value = error.message || '项目删除失败。';
+  }
+}
+
+function handleProjectChange(projectId) {
+  selectedProjectId.value = projectId ?? '';
+}
 
 async function loadReviewHistory() {
   historyLoading.value = true;
@@ -110,7 +178,7 @@ function buildSavePayload(payload, aiResponse) {
   }));
   return {
     requestId: crypto.randomUUID(),
-    repositoryPath: payload.repositoryPath ?? null,
+    repositoryPath: selectedProject.value?.repositoryPath ?? payload.repositoryPath ?? null,
     repository: payload.repository ?? null,
     title: payload.title,
     sourceType: payload.mode === 'git' ? 'GIT' : 'MANUAL',
@@ -193,6 +261,7 @@ function exportMarkdown() {
 onMounted(() => {
   window.addEventListener('hashchange', syncRoute);
   checkAiHealth();
+  loadProjects();
   loadReviewHistory();
 });
 onBeforeUnmount(() => {
@@ -252,8 +321,11 @@ onBeforeUnmount(() => {
             :scanning="scanning"
             :scan-result="scanResult"
             :scan-error="scanError"
+            :projects="projects"
+            :selected-project-id="selectedProjectId"
             @scan="handleScan"
             @submit="handleSubmit"
+            @project-change="handleProjectChange"
             @load-demo="loadDemo"
           />
           <ReviewStatus :task="task" :local-git="localGitReview" />
@@ -265,21 +337,40 @@ onBeforeUnmount(() => {
 
       <div v-else-if="route === 'projects'" class="content-wrap">
         <section class="page-intro">
-          <div><p class="eyebrow">项目管理</p><h1>本地项目</h1><p class="intro-copy">管理最近扫描过的本地 Git 仓库。</p></div>
+          <div><p class="eyebrow">项目管理</p><h1>本地项目</h1><p class="intro-copy">引入本机 Git 仓库，并配置代码评审触发策略。</p></div>
           <button class="secondary-button" type="button" @click="goTo('review')"><span>↗</span>开始评审</button>
         </section>
-        <section class="projects-layout">
-          <div class="panel project-summary-panel">
-            <div class="panel-heading"><div><p class="eyebrow">当前项目</p><h2>{{ scanResult?.repositoryPath || '尚未扫描项目' }}</h2></div><span v-if="scanResult" class="status-badge tone-success"><span class="status-dot"></span>已连接</span></div>
-            <div v-if="scanResult" class="project-detail-grid">
-              <div><span>当前分支</span><strong>{{ scanResult.branch || '未命名分支' }}</strong></div>
-              <div><span>HEAD 提交</span><strong class="mono-value">{{ scanResult.headCommit?.slice(0, 8) || '-' }}</strong></div>
-              <div><span>变更文件</span><strong>{{ scanResult.files?.length || 0 }}</strong></div>
-            </div>
-            <div v-else class="empty-state"><span class="empty-icon">+</span><strong>还没有扫描本地项目</strong><span>前往评审工作台输入仓库路径并扫描变更。</span></div>
+        <p v-if="projectError" class="notice-banner"><span>!</span>{{ projectError }}</p>
+        <section class="panel project-import-panel">
+          <div class="panel-heading"><div><p class="eyebrow">引入项目</p><h2>连接本机 Git 仓库</h2></div><span v-if="projectsLoading" class="scan-message">处理中...</span></div>
+          <div class="project-import-form">
+            <label class="field"><span>仓库路径</span><input v-model="projectPathInput" type="text" placeholder="D:\\development\\project\\repository" /></label>
+            <button class="primary-button project-import-button" type="button" :disabled="projectsLoading" @click="handleImportProject">{{ projectsLoading ? '引入中...' : '引入项目' }}</button>
           </div>
-          <div class="panel"><div class="panel-heading"><div><p class="eyebrow">使用说明</p><h2>从本地仓库开始</h2></div></div><ol class="project-steps"><li>输入本机上的 Git 仓库路径</li><li>扫描工作区或基准提交的变更</li><li>选择文件并提交代码评审</li></ol><button class="primary-button" type="button" @click="goTo('review')">前往评审工作台</button></div>
         </section>
+        <section v-if="projects.length" class="project-list">
+          <article v-for="project in projects" :key="project.id" class="panel project-item">
+            <div class="panel-heading">
+              <div><p class="eyebrow">已引入项目</p><h2>{{ project.name }}</h2><p class="project-path mono-value">{{ project.repositoryPath }}</p></div>
+              <button class="ghost-button danger-button" type="button" @click="handleProjectDelete(project)">删除项目</button>
+            </div>
+            <div class="project-detail-grid">
+              <div><span>当前分支</span><strong>{{ project.branch || '未命名分支' }}</strong></div>
+              <div><span>HEAD 提交</span><strong class="mono-value">{{ project.headCommit?.slice(0, 8) || '-' }}</strong></div>
+              <div><span>状态</span><strong>{{ project.policy.enabled ? '已启用' : '已停用' }}</strong></div>
+            </div>
+            <div class="policy-grid">
+              <label class="checkbox-field"><input v-model="project.policy.enabled" type="checkbox" />启用项目评审</label>
+              <label class="checkbox-field"><input v-model="project.policy.preCommitEnabled" type="checkbox" />提交前评审</label>
+              <label class="checkbox-field"><input v-model="project.policy.prePushEnabled" type="checkbox" />推送前评审</label>
+              <label class="checkbox-field"><input v-model="project.policy.postMergeEnabled" type="checkbox" />合并后评审</label>
+              <label class="field"><span>阻断严重级别</span><select v-model="project.policy.failOnSeverity"><option value="LOW">LOW</option><option value="MEDIUM">MEDIUM</option><option value="HIGH">HIGH</option><option value="CRITICAL">CRITICAL</option></select></label>
+              <label class="checkbox-field"><input v-model="project.policy.failOpen" type="checkbox" />LLM 异常时放行</label>
+            </div>
+            <div class="project-item-actions"><button class="secondary-button" type="button" :disabled="policySaving" @click="handlePolicySave(project)">{{ policySaving ? '保存中...' : '保存评审策略' }}</button><button class="primary-button project-review-button" type="button" @click="selectedProjectId = project.id; goTo('review')">使用此项目评审</button></div>
+          </article>
+        </section>
+        <div v-else-if="!projectsLoading" class="empty-state history-empty"><span class="empty-icon">+</span><strong>还没有引入项目</strong><span>引入仓库后，可以在工作台选择项目并启用 Git Hook 评审。</span></div>
       </div>
 
       <div v-else class="content-wrap">

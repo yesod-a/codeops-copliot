@@ -34,10 +34,11 @@ public class ReviewHistoryService {
         }
 
         String repository = firstNonBlank(command.repositoryPath(), command.repository());
+        String normalizedRepositoryPath = normalizeRepositoryPath(command.repositoryPath());
         String projectName = projectName(repository);
-        ProjectEntity project = findProject(command.repositoryPath(), projectName)
+        ProjectEntity project = findProject(normalizedRepositoryPath, projectName)
                 .orElseGet(() -> projectRepository.save(new ProjectEntity(
-                        projectName, blankToNull(command.repositoryPath()), command.branch(), command.headCommit())));
+                        projectName, normalizedRepositoryPath, command.branch(), command.headCommit())));
         project.updateMetadata(projectName, command.branch(), command.headCommit());
 
         List<FileCommand> fileCommands = command.files() == null ? List.of() : command.files();
@@ -155,6 +156,11 @@ public class ReviewHistoryService {
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private String normalizeRepositoryPath(String value) {
+        String normalized = blankToNull(value);
+        return normalized == null ? null : normalized.replace('\\', '/');
     }
 
     private String defaultValue(String value, String fallback) {

@@ -42,6 +42,26 @@ docker compose down
 
 The script keeps the Java process in the foreground. Press `Ctrl+C` to stop Java, then run `docker compose down` to stop the Docker services. MySQL data is kept in the named `mysql-data` volume. The Docker database uses host port `3307` by default to avoid conflicts with an existing local MySQL installation.
 
+## Install the pre-push review hook
+
+Install the hook once from the repository root:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-pre-push-hook.ps1
+```
+
+Before each `git push`, the hook reads Git's outgoing commit range, calls the LangChain service at `http://127.0.0.1:8090/api/ai/review`, saves the result through Java, and blocks the push when a `HIGH` or `CRITICAL` finding is returned. A failed review also blocks the push by default.
+
+Useful local settings:
+
+```powershell
+$env:CODEOPS_REVIEW_FAIL_ON_SEVERITY = 'MEDIUM'
+$env:CODEOPS_REVIEW_TIMEOUT_SECONDS = '120'
+$env:CODEOPS_REVIEW_FAIL_OPEN = 'true'
+```
+
+Use `CODEOPS_REVIEW_FAIL_OPEN=true` only when the local AI service is unavailable and you want to allow the push. Git hooks can be bypassed with `git push --no-verify`, so GitHub branch protection and required CI checks should remain the final merge gate.
+
 ## Run the frontend
 
 Requires Node.js 20+.
