@@ -25,6 +25,22 @@ export function filterFindings(findings = [], severity = 'ALL') {
   return findings.filter((finding) => finding.severity === severity);
 }
 
+export function getSelectableGitFiles(files = []) {
+  return files.filter((file) => file.binary !== true && file.supported !== false);
+}
+
+export function toggleGitFile(selected = [], path) {
+  return selected.includes(path)
+    ? selected.filter((item) => item !== path)
+    : [...selected, path];
+}
+
+export function toggleAllGitFiles(files = [], selected = []) {
+  const selectablePaths = getSelectableGitFiles(files).map((file) => file.path);
+  const hasAll = selectablePaths.length > 0 && selectablePaths.every((path) => selected.includes(path));
+  return hasAll ? [] : selectablePaths;
+}
+
 export function calculateRiskScore(findings = []) {
   const penalty = findings.reduce((total, finding) => {
     const values = { CRITICAL: 26, HIGH: 15, MEDIUM: 8, LOW: 3 };

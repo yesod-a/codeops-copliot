@@ -28,3 +28,11 @@ export function submitReview(payload) {
 export function getReview(id) {
   return request(`/api/reviews/${id}`);
 }
+
+export function scanRepository(payload) {
+  return request('/api/repositories/scan', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function submitGitReview(payload) {
+  return request('/api/reviews/from-git', { method: 'POST', body: JSON.stringify(payload) });
+}
