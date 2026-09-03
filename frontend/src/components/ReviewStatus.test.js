@@ -17,7 +17,7 @@ describe('ReviewStatus', () => {
       }
     });
 
-    expect(wrapper.text()).toContain('Local Git');
+    expect(wrapper.text()).toContain('本地 Git');
     expect(wrapper.text()).not.toContain('PR #123');
   });
 });
