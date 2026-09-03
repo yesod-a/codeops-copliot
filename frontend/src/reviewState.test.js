@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterFindings, getFindingCounts, getSelectableGitFiles, getStatusMeta, toggleAllGitFiles, toggleGitFile } from './reviewState.js';
+import { filterFindings, getCategoryLabel, getFindingCounts, getFindingText, getGitStatusLabel, getSelectableGitFiles, getStatusMeta, toggleAllGitFiles, toggleGitFile } from './reviewState.js';
 
 describe('review state helpers', () => {
   it('maps review statuses to user-facing metadata', () => {
@@ -7,6 +7,21 @@ describe('review state helpers', () => {
     expect(getStatusMeta('PROCESSING')).toEqual({ label: '分析中', tone: 'info' });
     expect(getStatusMeta('COMPLETED')).toEqual({ label: '已完成', tone: 'success' });
     expect(getStatusMeta('FAILED')).toEqual({ label: '失败', tone: 'danger' });
+  });
+
+  it('maps finding categories to Chinese labels', () => {
+    expect(getCategoryLabel('SECURITY')).toBe('安全性');
+    expect(getCategoryLabel('UNKNOWN')).toBe('其他');
+  });
+
+  it('maps Git statuses to Chinese labels', () => {
+    expect(getGitStatusLabel('MODIFIED')).toBe('已修改');
+    expect(getGitStatusLabel('UNKNOWN')).toBe('其他');
+  });
+
+  it('localizes built-in finding text for the Chinese interface', () => {
+    expect(getFindingText('The change contains an unresolved TODO or FIXME marker.')).toBe('变更中包含未完成的 TODO 或 FIXME 标记。');
+    expect(getFindingText('a custom model finding')).toBe('a custom model finding');
   });
 
   it('counts findings by severity and filters the selected severity', () => {

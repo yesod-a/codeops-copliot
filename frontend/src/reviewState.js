@@ -49,6 +49,45 @@ export function calculateRiskScore(findings = []) {
   return Math.max(0, Math.min(100, 100 - penalty));
 }
 
+const categoryLabels = {
+  SECURITY: '安全性',
+  ARCHITECTURE: '架构设计',
+  MAINTAINABILITY: '可维护性',
+  PERFORMANCE: '性能',
+  CORRECTNESS: '正确性'
+};
+
+export function getCategoryLabel(category) {
+  return categoryLabels[category] ?? '其他';
+}
+
+const gitStatusLabels = {
+  MODIFIED: '已修改',
+  ADDED: '已新增',
+  DELETED: '已删除',
+  RENAMED: '已重命名',
+  UNTRACKED: '未跟踪'
+};
+
+export function getGitStatusLabel(status) {
+  return gitStatusLabels[status] ?? '其他';
+}
+
+const findingTextLabels = {
+  'Sensitive data may be read or assigned directly in application code.': '代码中可能直接读取或赋值敏感数据。',
+  'Move secrets to a managed secret store and avoid logging or copying credentials.': '请将密钥交给专用密钥管理服务，避免记录或复制凭据。',
+  'The change contains an unresolved TODO or FIXME marker.': '变更中包含未完成的 TODO 或 FIXME 标记。',
+  'Create a tracked issue or finish the implementation before merging.': '请在合并前完成实现，或创建可追踪的问题单。',
+  'The controller appears to depend directly on a repository.': '控制器似乎直接依赖数据仓库。',
+  'Move data access behind an application service to keep the HTTP layer focused on transport concerns.': '请将数据访问放到应用服务之后，让 HTTP 层专注于传输职责。',
+  'The controller reads infrastructure headers directly instead of using a dedicated authentication abstraction.': '控制器直接读取基础设施请求头，未使用专用的认证抽象。',
+  'Resolve the authenticated principal through Spring Security and keep request parsing separate from business logic.': '请通过 Spring Security 获取认证主体，并将请求解析与业务逻辑分离。'
+};
+
+export function getFindingText(text) {
+  return findingTextLabels[text] ?? text;
+}
+
 export const severityMeta = {
   CRITICAL: { label: '严重', className: 'severity-critical' },
   HIGH: { label: '高风险', className: 'severity-high' },

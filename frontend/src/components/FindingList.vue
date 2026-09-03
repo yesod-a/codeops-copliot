@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue';
-import { filterFindings, severityMeta } from '../reviewState.js';
+import { filterFindings, getCategoryLabel, getFindingText, severityMeta } from '../reviewState.js';
 
 const props = defineProps({ findings: { type: Array, default: () => [] } });
 const activeFilter = defineModel({ default: 'ALL' });
@@ -22,7 +22,7 @@ function formatConfidence(value) {
   <section class="report-section">
     <div class="section-heading report-heading">
       <div>
-        <p class="eyebrow">REVIEW FINDINGS</p>
+        <p class="eyebrow">评审问题</p>
         <h2>问题清单</h2>
       </div>
       <div class="filter-tabs" role="tablist" aria-label="按严重程度筛选">
@@ -36,18 +36,18 @@ function formatConfidence(value) {
       <article v-for="(finding, index) in visibleFindings" :key="`${finding.file}-${finding.line}-${index}`" class="finding-card">
         <div class="finding-topline">
           <span class="severity-chip" :class="severityMeta[finding.severity]?.className">{{ severityMeta[finding.severity]?.label || finding.severity }}</span>
-          <span class="finding-category">{{ finding.category }}</span>
+          <span class="finding-category">{{ getCategoryLabel(finding.category) }}</span>
           <span class="confidence">置信度 {{ formatConfidence(finding.confidence) }}</span>
         </div>
-        <h3>{{ finding.message }}</h3>
+        <h3>{{ getFindingText(finding.message) }}</h3>
         <p class="file-reference"><span class="file-icon">ƒ</span>{{ finding.file }}<span class="line-number">L{{ finding.line }}</span></p>
         <div class="evidence-block">
-          <span class="evidence-label">EVIDENCE</span>
+          <span class="evidence-label">代码证据</span>
           <code>{{ finding.evidence }}</code>
         </div>
         <div class="suggestion-block">
           <span class="suggestion-icon">↳</span>
-          <p>{{ finding.suggestion }}</p>
+          <p>{{ getFindingText(finding.suggestion) }}</p>
         </div>
       </article>
     </div>

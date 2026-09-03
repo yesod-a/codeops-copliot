@@ -23,7 +23,7 @@ function isStepComplete(key) {
   <section class="panel status-panel">
     <div class="panel-heading">
       <div>
-        <p class="eyebrow">RUN STATUS</p>
+        <p class="eyebrow">执行状态</p>
         <h2>评审进度</h2>
       </div>
       <span class="status-badge" :class="`tone-${status.tone}`">
@@ -32,10 +32,10 @@ function isStepComplete(key) {
     </div>
 
     <div class="task-reference">
-      <span class="repo-mark">GH</span>
+      <span class="repo-mark">{{ localGit ? 'GIT' : 'PR' }}</span>
       <div>
         <strong>{{ task.repository }}</strong>
-        <span>{{ localGit ? 'Local Git' : `PR #${task.pullRequestNumber}` }} · {{ task.title }}</span>
+        <span>{{ localGit ? '本地 Git' : `拉取请求 #${task.pullRequestNumber}` }} · {{ task.title }}</span>
       </div>
     </div>
 

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue';
-import { getSelectableGitFiles, toggleAllGitFiles, toggleGitFile } from '../reviewState.js';
+import { getGitStatusLabel, getSelectableGitFiles, toggleAllGitFiles, toggleGitFile } from '../reviewState.js';
 
 const emit = defineEmits(['scan', 'submit', 'load-demo']);
 const props = defineProps({
@@ -13,12 +13,12 @@ const props = defineProps({
 const demoForm = {
   repository: 'acme/order-service',
   pullRequestNumber: 42,
-  title: 'Add payment endpoint',
+  title: '新增支付接口',
   path: 'src/main/java/com/acme/order/PaymentController.java',
   content: 'String token = request.getHeader("Authorization");\n// TODO add idempotency validation'
 };
 const form = reactive({ ...demoForm });
-const gitForm = reactive({ repositoryPath: '', scope: 'WORKTREE', baseRef: '', title: 'Review local changes' });
+const gitForm = reactive({ repositoryPath: '', scope: 'WORKTREE', baseRef: '', title: '评审本地变更' });
 const mode = ref('git');
 const selectedPaths = ref([]);
 const validationMessage = ref('');
@@ -45,11 +45,11 @@ function selectMode(nextMode) {
 
 function scan() {
   if (!gitForm.repositoryPath.trim()) {
-    validationMessage.value = 'Enter the absolute path of a local Git repository.';
+    validationMessage.value = '请输入本地 Git 仓库的绝对路径。';
     return;
   }
   if (gitForm.scope === 'BASE_COMMIT' && !gitForm.baseRef.trim()) {
-    validationMessage.value = 'Enter a base commit or branch to compare.';
+    validationMessage.value = '请输入用于对比的基准分支或提交。';
     return;
   }
   validationMessage.value = '';
@@ -71,11 +71,11 @@ function toggleAllFiles() {
 
 function submitGitReview() {
   if (!gitForm.title.trim()) {
-    validationMessage.value = 'Enter a title for this review.';
+    validationMessage.value = '请输入评审标题。';
     return;
   }
   if (!selectedPaths.value.length) {
-    validationMessage.value = 'Select at least one supported changed file.';
+    validationMessage.value = '请至少选择一个支持评审的变更文件。';
     return;
   }
   validationMessage.value = '';
@@ -91,7 +91,7 @@ function submitGitReview() {
 
 function submitManualReview() {
   if (!form.repository.trim() || !form.title.trim() || !form.path.trim() || !form.content.trim() || !Number.isInteger(Number(form.pullRequestNumber)) || Number(form.pullRequestNumber) < 1) {
-    validationMessage.value = 'Complete the review details before submitting.';
+    validationMessage.value = '请填写完整的评审信息后再提交。';
     return;
   }
   validationMessage.value = '';
@@ -114,52 +114,52 @@ function loadDemo() {
   <section class="panel form-panel">
     <div class="panel-heading">
       <div>
-        <p class="eyebrow">START A REVIEW</p>
-        <h2>Code review request</h2>
+        <p class="eyebrow">创建评审</p>
+        <h2>评审请求</h2>
       </div>
-      <button class="icon-button subtle" type="button" title="Load demo" aria-label="Load demo" @click="loadDemo">+</button>
+      <button class="icon-button subtle" type="button" title="载入示例" aria-label="载入示例" @click="loadDemo">+</button>
     </div>
 
-    <div class="mode-switch" role="group" aria-label="Review source">
-      <button data-testid="mode-git" type="button" :class="{ selected: mode === 'git' }" @click="selectMode('git')">Local Git</button>
-      <button data-testid="mode-manual" type="button" :class="{ selected: mode === 'manual' }" @click="selectMode('manual')">Manual paste</button>
+    <div class="mode-switch" role="group" aria-label="评审来源">
+      <button data-testid="mode-git" type="button" :class="{ selected: mode === 'git' }" @click="selectMode('git')">本地 Git</button>
+      <button data-testid="mode-manual" type="button" :class="{ selected: mode === 'manual' }" @click="selectMode('manual')">手动粘贴</button>
     </div>
 
     <form v-if="mode === 'git'" class="review-form git-review-form" novalidate @submit.prevent="submitGitReview">
       <div class="git-scan-grid">
         <label class="field git-path-field">
-          <span>Local repository path</span>
+          <span>本地仓库路径</span>
           <input v-model="gitForm.repositoryPath" type="text" placeholder="D:\\development\\project\\repository" autocomplete="off" />
         </label>
         <label class="field">
-          <span>Change scope</span>
+          <span>变更范围</span>
           <select v-model="gitForm.scope">
-            <option value="WORKTREE">Working tree</option>
-            <option value="BASE_COMMIT">Base commit</option>
+            <option value="WORKTREE">工作区变更</option>
+            <option value="BASE_COMMIT">基准提交</option>
           </select>
         </label>
         <label v-if="gitForm.scope === 'BASE_COMMIT'" class="field">
-          <span>Base ref</span>
-          <input v-model="gitForm.baseRef" type="text" placeholder="main or commit SHA" autocomplete="off" />
+          <span>基准分支或提交</span>
+          <input v-model="gitForm.baseRef" type="text" placeholder="例如 main 或提交 SHA" autocomplete="off" />
         </label>
         <button class="secondary-button scan-button" type="button" :disabled="props.scanning" @click="scan">
-          {{ props.scanning ? 'Scanning...' : 'Scan changes' }}
+          {{ props.scanning ? '扫描中...' : '扫描变更' }}
         </button>
       </div>
 
       <label class="field review-title-field">
-        <span>Review title</span>
-        <input v-model="gitForm.title" type="text" placeholder="Review local changes" />
+        <span>评审标题</span>
+        <input v-model="gitForm.title" type="text" placeholder="评审本地变更" />
       </label>
 
       <p v-if="props.scanError" class="form-error">{{ props.scanError }}</p>
-      <p v-else-if="props.scanning" class="scan-message">Reading local Git changes...</p>
-      <p v-else-if="props.scanResult && !changedFiles.length" class="scan-message">No changed files were found for this scope.</p>
+      <p v-else-if="props.scanning" class="scan-message">正在读取本地 Git 变更...</p>
+      <p v-else-if="props.scanResult && !changedFiles.length" class="scan-message">当前范围内没有发现变更文件。</p>
 
       <div v-if="changedFiles.length" class="changed-files" aria-label="Changed files">
         <div class="changed-files-toolbar">
-          <strong>{{ selectedPaths.length }} of {{ selectableFiles.length }} files selected</strong>
-          <button type="button" class="text-button" @click="toggleAllFiles">{{ allSelectableSelected ? 'Clear all' : 'Select all' }}</button>
+          <strong>已选择 {{ selectedPaths.length }} / {{ selectableFiles.length }} 个文件</strong>
+          <button type="button" class="text-button" @click="toggleAllFiles">{{ allSelectableSelected ? '清空选择' : '全选文件' }}</button>
         </div>
         <label v-for="file in changedFiles" :key="file.path" class="changed-file-row" :class="{ selected: selectedPaths.includes(file.path), unavailable: file.binary || file.supported === false }">
           <input
@@ -171,54 +171,54 @@ function loadDemo() {
           />
           <span class="file-row-main">
             <code>{{ file.path }}</code>
-            <span v-if="file.binary || file.supported === false" class="file-skip-reason">{{ file.skipReason || (file.binary ? 'Binary file' : 'Unsupported file type') }}</span>
+            <span v-if="file.binary || file.supported === false" class="file-skip-reason">{{ file.skipReason || (file.binary ? '二进制文件' : '不支持的文件类型') }}</span>
           </span>
-          <span class="git-status" :class="`git-status-${String(file.status).toLowerCase()}`">{{ file.status }}</span>
+          <span class="git-status" :class="`git-status-${String(file.status).toLowerCase()}`">{{ getGitStatusLabel(file.status) }}</span>
           <span class="file-stats"><b>+{{ file.additions }}</b><i>-{{ file.deletions }}</i></span>
         </label>
       </div>
 
       <div v-if="selectedFile" class="patch-preview">
-        <div class="patch-preview-heading"><span>Patch preview</span><code>{{ selectedFile.path }}</code></div>
-        <pre>{{ selectedFile.patch || 'No textual patch is available for this file.' }}</pre>
+        <div class="patch-preview-heading"><span>补丁预览</span><code>{{ selectedFile.path }}</code></div>
+        <pre>{{ selectedFile.patch || '该文件没有可用的文本补丁。' }}</pre>
       </div>
 
       <p v-if="validationMessage" class="form-error">{{ validationMessage }}</p>
       <button data-testid="git-submit" class="primary-button submit-button" type="submit" :disabled="props.submitting || !selectedPaths.length">
         <span class="button-dot"></span>
-        {{ props.submitting ? 'Submitting review...' : 'Review selected files' }}
+        {{ props.submitting ? '提交中...' : '评审选中文件' }}
       </button>
     </form>
 
     <form v-else class="review-form" novalidate @submit.prevent="submitManualReview">
       <div class="form-grid">
         <label class="field field-wide">
-          <span>Repository</span>
+          <span>代码仓库</span>
           <input v-model="form.repository" type="text" placeholder="owner/repository" />
         </label>
         <label class="field">
-          <span>Pull Request</span>
+          <span>拉取请求编号</span>
           <input v-model.number="form.pullRequestNumber" type="number" min="1" />
         </label>
         <label class="field field-wide">
-          <span>Change title</span>
-          <input v-model="form.title" type="text" placeholder="Describe this change" />
+          <span>变更标题</span>
+          <input v-model="form.title" type="text" placeholder="描述本次变更" />
         </label>
         <label class="field field-wide">
-          <span>File path</span>
+          <span>文件路径</span>
           <input v-model="form.path" type="text" placeholder="src/main/java/..." />
         </label>
       </div>
 
       <label class="field">
-        <span>Changed content</span>
-        <textarea v-model="form.content" rows="7" spellcheck="false" placeholder="Paste changed Java code here"></textarea>
+        <span>变更内容</span>
+          <textarea v-model="form.content" rows="7" spellcheck="false" placeholder="请粘贴变更后的 Java 代码"></textarea>
       </label>
 
       <p v-if="validationMessage" class="form-error">{{ validationMessage }}</p>
       <button class="primary-button submit-button" type="submit" :disabled="props.submitting">
         <span class="button-dot"></span>
-        {{ props.submitting ? 'Submitting...' : 'Submit code review' }}
+        {{ props.submitting ? '提交中...' : '提交代码评审' }}
       </button>
     </form>
   </section>
