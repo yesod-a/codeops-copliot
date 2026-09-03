@@ -14,6 +14,7 @@ const scanResult = ref(null);
 const scanError = ref('');
 const connectionMessage = ref('本地示例');
 const notice = ref('');
+const localGitReview = ref(false);
 let pollingTimer;
 
 const counts = computed(() => getFindingCounts(task.value.findings));
@@ -26,6 +27,7 @@ function loadDemo() {
   activeFilter.value = 'ALL';
   connectionMessage.value = '本地示例';
   notice.value = '';
+  localGitReview.value = false;
 }
 
 async function handleScan(payload) {
@@ -47,6 +49,7 @@ async function handleSubmit(payload) {
   window.clearTimeout(pollingTimer);
   submitting.value = true;
   notice.value = '';
+  localGitReview.value = payload.mode === 'git';
   try {
     const created = payload.mode === 'git'
       ? await submitGitReview(payload)
@@ -102,7 +105,10 @@ function makeLocalPreview(payload) {
 }
 
 function exportMarkdown() {
-  const header = `# ${task.value.title}\n\n- Repository: ${task.value.repository}\n- Pull Request: #${task.value.pullRequestNumber}\n- Status: ${statusMeta.value.label}\n- Risk score: ${score.value}/100\n`;
+  const reviewReference = localGitReview.value
+    ? `- Source: Local Git\n- Repository path: ${task.value.repository}`
+    : `- Repository: ${task.value.repository}\n- Pull Request: #${task.value.pullRequestNumber}`;
+  const header = `# ${task.value.title}\n\n${reviewReference}\n- Status: ${statusMeta.value.label}\n- Risk score: ${score.value}/100\n`;
   const body = task.value.findings.length
     ? task.value.findings.map((finding, index) => [
       `## ${index + 1}. [${finding.severity}] ${finding.message}`,
@@ -119,7 +125,8 @@ function exportMarkdown() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${task.value.repository.replace(/[^a-z0-9]+/gi, '-')}-pr-${task.value.pullRequestNumber}-review.md`;
+  const suffix = localGitReview.value ? 'local-git' : `pr-${task.value.pullRequestNumber}`;
+  link.download = `${task.value.repository.replace(/[^a-z0-9]+/gi, '-')}-${suffix}-review.md`;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -184,7 +191,7 @@ onBeforeUnmount(() => window.clearTimeout(pollingTimer));
             @submit="handleSubmit"
             @load-demo="loadDemo"
           />
-          <ReviewStatus :task="task" />
+          <ReviewStatus :task="task" :local-git="localGitReview" />
         </section>
 
         <div class="report-bar"><div><span class="report-status" :class="`tone-${statusMeta.tone}`"><span class="status-dot"></span>{{ statusMeta.label }}</span><span class="report-updated">最后更新 · {{ task.updatedAt ? new Date(task.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--:--' }}</span></div><button class="ghost-button" type="button" @click="exportMarkdown">导出 Markdown <span>↓</span></button></div>

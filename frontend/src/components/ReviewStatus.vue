@@ -2,7 +2,10 @@
 import { computed } from 'vue';
 import { getStatusMeta } from '../reviewState.js';
 
-const props = defineProps({ task: { type: Object, required: true } });
+const props = defineProps({
+  task: { type: Object, required: true },
+  localGit: Boolean
+});
 const status = computed(() => getStatusMeta(props.task.status));
 const timeline = [
   { key: 'PENDING', label: '任务已接收' },
@@ -32,7 +35,7 @@ function isStepComplete(key) {
       <span class="repo-mark">GH</span>
       <div>
         <strong>{{ task.repository }}</strong>
-        <span>PR #{{ task.pullRequestNumber }} · {{ task.title }}</span>
+        <span>{{ localGit ? 'Local Git' : `PR #${task.pullRequestNumber}` }} · {{ task.title }}</span>
       </div>
     </div>
 
