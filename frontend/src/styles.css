@@ -3,7 +3,7 @@
 body { margin: 0; min-width: 320px; background: #0d1117; }
 button, input, textarea { font: inherit; }
 button { cursor: pointer; }
-button:disabled { cursor: wait; opacity: .65; }
+button:disabled { cursor: not-allowed; opacity: .65; }
 .app-shell { min-height: 100vh; display: flex; background: #0d1117; }
 .sidebar { width: 244px; min-height: 100vh; padding: 28px 16px 18px; display: flex; flex-direction: column; border-right: 1px solid #252c35; background: #10151c; }
 .brand-lockup { display: flex; align-items: center; gap: 11px; padding: 0 12px 42px; }
