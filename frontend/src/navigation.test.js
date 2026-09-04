@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getRoute } from './navigation.js';
+import { getHistoryId, getRoute } from './navigation.js';
 
 describe('navigation', () => {
   it('maps supported hash routes and falls back to review', () => {
@@ -8,5 +8,11 @@ describe('navigation', () => {
     expect(getRoute('#history')).toBe('history');
     expect(getRoute('#settings')).toBe('review');
     expect(getRoute('')).toBe('review');
+  });
+
+  it('recognizes history detail routes', () => {
+    expect(getRoute('#history/review-1')).toBe('history-detail');
+    expect(getRoute('#history/')).toBe('history');
+    expect(getHistoryId('#history/review-1')).toBe('review-1');
   });
 });

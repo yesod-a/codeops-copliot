@@ -5,7 +5,7 @@ import FindingList from './components/FindingList.vue';
 import ReviewForm from './components/ReviewForm.vue';
 import ReviewStatus from './components/ReviewStatus.vue';
 import { calculateRiskScore, demoTask, getFindingCounts, getFindingText, getStatusMeta } from './reviewState.js';
-import { getRoute } from './navigation.js';
+import { getHistoryId, getRoute } from './navigation.js';
 
 const task = ref(structuredClone(demoTask));
 const activeFilter = ref('ALL');
@@ -20,6 +20,8 @@ const route = ref(getRoute(window.location.hash));
 const reviewHistory = ref([]);
 const historyLoading = ref(false);
 const historyError = ref('');
+const historyDetailLoading = ref(false);
+const historyDetailId = ref(null);
 const aiHealth = ref(null);
 const projects = ref([]);
 const projectsLoading = ref(false);
@@ -106,6 +108,10 @@ async function loadReviewHistory() {
 function syncRoute() {
   route.value = getRoute(window.location.hash);
   if (route.value === 'history') loadReviewHistory();
+  if (route.value === 'history-detail') {
+    const id = getHistoryId(window.location.hash);
+    if (id && id !== historyDetailId.value) loadHistoryDetail(id);
+  }
 }
 
 function goTo(nextRoute) {
@@ -228,14 +234,24 @@ function makeAiTask(payload, findings) {
 }
 
 async function openHistory(id) {
+  route.value = 'history-detail';
+  goTo(`history/${encodeURIComponent(id)}`);
+  await loadHistoryDetail(id);
+}
+
+async function loadHistoryDetail(id) {
+  historyDetailId.value = id;
+  historyDetailLoading.value = true;
+  historyError.value = '';
   try {
     const detail = await getReviewDetails(id);
     task.value = detail;
     localGitReview.value = detail.sourceType === 'GIT';
     notice.value = '';
-    goTo('review');
   } catch (error) {
     historyError.value = error.message || '无法加载评审详情。';
+  } finally {
+    historyDetailLoading.value = false;
   }
 }
 
@@ -281,6 +297,10 @@ onMounted(() => {
   checkAiHealth();
   loadProjects();
   loadReviewHistory();
+  if (route.value === 'history-detail') {
+    const id = getHistoryId(window.location.hash);
+    if (id) loadHistoryDetail(id);
+  }
 });
 onBeforeUnmount(() => {
   window.clearTimeout(pollingTimer);
@@ -299,7 +319,7 @@ onBeforeUnmount(() => {
         <p class="nav-label">工作区</p>
         <a class="nav-item" :class="{ active: route === 'review' }" href="#review"><span class="nav-icon">◈</span>评审工作台</a>
         <a class="nav-item" :class="{ active: route === 'projects' }" href="#projects"><span class="nav-icon">▦</span>项目</a>
-        <a class="nav-item" :class="{ active: route === 'history' }" href="#history"><span class="nav-icon">◷</span>历史记录</a>
+        <a class="nav-item" :class="{ active: route === 'history' || route === 'history-detail' }" href="#history"><span class="nav-icon">◷</span>历史记录</a>
         <p class="nav-label nav-label-spaced">系统</p>
         <span class="nav-item nav-item-disabled"><span class="nav-icon">⚙</span>设置（即将推出）</span>
       </nav>
@@ -314,7 +334,7 @@ onBeforeUnmount(() => {
 
     <main class="main-content" id="review">
       <header class="topbar">
-        <div class="breadcrumb"><span>工作区</span><b>/</b><strong>{{ route === 'review' ? '评审工作台' : route === 'projects' ? '项目' : '历史记录' }}</strong></div>
+        <div class="breadcrumb"><span>工作区</span><b>/</b><strong>{{ route === 'review' ? '评审工作台' : route === 'projects' ? '项目' : route === 'history-detail' ? '评审详情' : '历史记录' }}</strong></div>
         <div class="topbar-actions"><span class="connection-pill"><span class="pulse-dot"></span>{{ connectionMessage }}</span><button class="icon-button" title="帮助">?</button><span class="avatar small">YL</span></div>
       </header>
 
@@ -391,7 +411,7 @@ onBeforeUnmount(() => {
         <div v-else-if="!projectsLoading" class="empty-state history-empty"><span class="empty-icon">+</span><strong>还没有引入项目</strong><span>引入仓库后，可以在工作台选择项目并启用 Git Hook 评审。</span></div>
       </div>
 
-      <div v-else class="content-wrap">
+      <div v-else-if="route === 'history'" class="content-wrap">
         <section class="page-intro">
           <div><p class="eyebrow">评审记录</p><h1>历史记录</h1><p class="intro-copy">查看数据库保存的评审任务。</p></div>
           <button class="secondary-button" type="button" @click="goTo('review')"><span>↗</span>新建评审</button>
@@ -405,6 +425,33 @@ onBeforeUnmount(() => {
           </article>
         </section>
         <div v-else class="empty-state history-empty"><span class="empty-icon">◷</span><strong>暂无评审记录</strong><span>提交一次本地 Git 或手动评审后，记录会显示在这里。</span><button class="primary-button" type="button" @click="goTo('review')">创建第一条评审</button></div>
+      </div>
+
+      <div v-else class="content-wrap history-detail-page">
+        <section class="page-intro">
+          <div><p class="eyebrow">评审记录</p><h1>{{ task.title }}</h1><p class="intro-copy">查看这次评审任务的完整结果和代码问题。</p></div>
+          <div class="page-intro-actions">
+<!--            <button class="secondary-button" type="button" @click="goTo('history')">返回历史记录</button>-->
+            <button class="primary-button" type="button" @click="goTo('review')">新建评审</button>
+          </div>
+        </section>
+        <p v-if="historyError" class="notice-banner"><span>!</span>{{ historyError }}</p>
+        <p v-else-if="historyDetailLoading" class="scan-message">正在加载评审详情...</p>
+        <template v-else>
+          <section class="detail-summary panel">
+            <div class="detail-summary-heading"><div><span class="eyebrow">{{ localGitReview ? '本地 Git' : '手动评审' }}</span><h2>{{ task.repository }}</h2></div><span class="status-badge" :class="`tone-${statusMeta.tone}`"><span class="status-dot"></span>{{ statusMeta.label }}</span></div>
+            <div class="detail-meta-grid">
+              <div><span>风险评分</span><strong>{{ score }}/100</strong></div>
+              <div><span>发现问题</span><strong>{{ counts.total }}</strong></div>
+              <div><span>高风险问题</span><strong>{{ counts.high + counts.critical }}</strong></div>
+              <div><span>评审模型</span><strong>{{ task.modelName || '未知' }}</strong></div>
+              <div><span>分支</span><strong>{{ task.branch || '-' }}</strong></div>
+              <div><span>提交</span><strong class="mono-value">{{ task.headCommit?.slice(0, 12) || '-' }}</strong></div>
+            </div>
+          </section>
+          <div class="report-bar"><div><span class="report-status" :class="`tone-${statusMeta.tone}`"><span class="status-dot"></span>{{ statusMeta.label }}</span><span class="report-updated">完成于 · {{ task.completedAt || task.createdAt ? new Date(task.completedAt || task.createdAt).toLocaleString('zh-CN') : '-' }}</span></div><button class="ghost-button" type="button" @click="exportMarkdown">导出 Markdown <span>↓</span></button></div>
+          <FindingList v-model="activeFilter" :findings="task.findings" />
+        </template>
       </div>
     </main>
   </div>
