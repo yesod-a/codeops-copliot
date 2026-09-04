@@ -20,6 +20,8 @@ class ReviewFinding(BaseModel):
     severity: Severity
     file: str = Field(min_length=1)
     line: int = Field(ge=1)
+    start_line: int | None = Field(default=None, ge=1)
+    end_line: int | None = Field(default=None, ge=1)
     message: str = Field(min_length=1, max_length=2_000)
     suggestion: str = Field(min_length=1, max_length=4_000)
     evidence: str = Field(default="", max_length=4_000)

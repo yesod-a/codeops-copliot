@@ -27,6 +27,10 @@ export function scanRepository(payload) {
   return request('/api/repositories/scan', { method: 'POST', body: JSON.stringify(payload) });
 }
 
+export function readSelectedGitFiles(payload) {
+  return request('/api/repositories/read-selected', { method: 'POST', body: JSON.stringify(payload) });
+}
+
 export function listProjects() {
   return request('/api/projects');
 }

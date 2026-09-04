@@ -27,4 +27,25 @@ Describe 'database-driven Git review hook' {
         $policy.failOnSeverity | Should Be 'MEDIUM'
         $policy.failOpen | Should Be $true
     }
+
+    It 'preserves execution state after loading pre-push helpers' {
+        $source = Get-Content -Raw $scriptPath
+
+        $source | Should Match '\$script:CodeOpsExecuteHook = -not \[bool\]\$NoExecute'
+        $source | Should Match 'if \(\$script:CodeOpsExecuteHook\)'
+    }
+
+    It 'reads the complete Windows repository root for policy lookup' {
+        $root = (@(Invoke-GitOutput @('rev-parse', '--show-toplevel')))[0].ToString().Trim()
+
+        $root | Should Be 'D:/development/project/my_learn'
+    }
+
+    It 'uses one LLM request and delegates grouping to the backend' {
+        $source = Get-Content -Raw $scriptPath
+
+        $source | Should Not Match 'New-ReviewBatches'
+        $source | Should Not Match 'foreach \(\$batch in \$batches\)'
+        $source | Should Match 'New-ReviewPayload -Repository \$RepositoryRoot'
+    }
 }

@@ -56,11 +56,12 @@ Useful local settings:
 
 ```powershell
 $env:CODEOPS_REVIEW_FAIL_ON_SEVERITY = 'MEDIUM'
-$env:CODEOPS_REVIEW_TIMEOUT_SECONDS = '120'
+$env:CODEOPS_REVIEW_TIMEOUT_SECONDS = '600'
 $env:CODEOPS_REVIEW_FAIL_OPEN = 'true'
+$env:CODEOPS_REVIEW_FILE_CHARS = '30000'
 ```
 
-Use `CODEOPS_REVIEW_FAIL_OPEN=true` only when the local AI service is unavailable and you want to allow the push. Git hooks can be bypassed with `git push --no-verify`, so GitHub branch protection and required CI checks should remain the final merge gate.
+The Hook excludes binary artifacts such as `.pyc`, truncates each file to `CODEOPS_REVIEW_FILE_CHARS`, and sends all reviewable text changes in one request. The Python backend then groups files by size, reviewing each group with a shared Main agent call; only genuinely large groups receive an additional Plan call. Use `CODEOPS_REVIEW_FAIL_OPEN=true` only when the local AI service is unavailable and you want to allow the push. Git hooks can be bypassed with `git push --no-verify`, so GitHub branch protection and required CI checks should remain the final merge gate.
 
 ## Run the frontend
 

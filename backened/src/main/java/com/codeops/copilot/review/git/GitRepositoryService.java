@@ -45,6 +45,13 @@ public class GitRepositoryService {
         return new RepositorySnapshot(root.toString(), branch.isBlank() ? "detached HEAD" : branch, headCommit, files);
     }
 
+    public RepositoryInfo inspect(Path repositoryPath) {
+        Path root = resolveRepositoryRoot(repositoryPath);
+        String branch = runRequired(root, List.of("branch", "--show-current")).strip();
+        String headCommit = runRequired(root, List.of("rev-parse", "HEAD")).strip();
+        return new RepositoryInfo(root, branch.isBlank() ? "detached HEAD" : branch, headCommit);
+    }
+
     public List<ChangedFile> readSelected(Path repositoryPath, GitScope scope, String baseRef, List<String> selectedPaths) {
         if (selectedPaths == null || selectedPaths.isEmpty()) {
             throw new GitReviewException("Select at least one changed file");

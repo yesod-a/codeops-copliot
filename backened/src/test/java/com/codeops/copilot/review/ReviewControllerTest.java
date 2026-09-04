@@ -68,6 +68,24 @@ class ReviewControllerTest {
     }
 
     @Test
+    void acceptsSnakeCaseFindingLineRangeFromLlm() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(historyService.save(any(ReviewHistoryService.SaveReviewCommand.class))).thenReturn(view(id));
+        String body = """
+                {"requestId":"%s","title":"Review","sourceType":"MANUAL",
+                 "files":[{"path":"src/App.java"}],
+                 "findings":[{"file":"src/App.java","category":"QUALITY","severity":"LOW","line":2,
+                 "start_line":2,"end_line":4,"message":"问题","suggestion":"修复","confidence":0.8}]}
+                """.formatted(UUID.randomUUID());
+
+        mockMvc.perform(post("/api/reviews")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk());
+        verify(historyService).save(any(ReviewHistoryService.SaveReviewCommand.class));
+    }
+
+    @Test
     void listsReviewSummaries() throws Exception {
         UUID id = UUID.randomUUID();
         when(historyService.list(20, 0)).thenReturn(List.of(new ReviewHistoryService.ReviewHistorySummary(
@@ -109,6 +127,21 @@ class ReviewControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.branch").value("main"))
                 .andExpect(jsonPath("$.files[0].path").value("src/App.java"));
+    }
+
+    @Test
+    void readsOnlySelectedGitFilesFromTheCurrentRepository() throws Exception {
+        when(repositoryService.readSelected(any(), eq(GitScope.WORKTREE), isNull(), eq(List.of("src/App.java"))))
+                .thenReturn(List.of(new ChangedFile("src/App.java", "diff --git a/src/App.java b/src/App.java")));
+
+        mockMvc.perform(post("/api/repositories/read-selected")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"repositoryPath\":\"C:\\\\repo\",\"scope\":\"WORKTREE\",\"files\":[\"src/App.java\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].path").value("src/App.java"))
+                .andExpect(jsonPath("$[0].content").value("diff --git a/src/App.java b/src/App.java"));
+
+        verify(repositoryService).readSelected(any(), eq(GitScope.WORKTREE), isNull(), eq(List.of("src/App.java")));
     }
 
     private ReviewHistoryService.ReviewHistoryView view(UUID id) {

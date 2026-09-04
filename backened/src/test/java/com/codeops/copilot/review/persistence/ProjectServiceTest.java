@@ -2,6 +2,7 @@ package com.codeops.copilot.review.persistence;
 
 import com.codeops.copilot.review.git.GitRepositoryService;
 import com.codeops.copilot.review.git.GitScope;
+import com.codeops.copilot.review.git.RepositoryInfo;
 import com.codeops.copilot.review.git.RepositorySnapshot;
 import org.junit.jupiter.api.Test;
 
@@ -18,8 +19,8 @@ class ProjectServiceTest {
         ProjectJpaRepository projects = mock(ProjectJpaRepository.class);
         ReviewPolicyRepository policies = mock(ReviewPolicyRepository.class);
         GitRepositoryService git = mock(GitRepositoryService.class);
-        when(git.scan(Path.of("D:/repo"), GitScope.WORKTREE, null))
-                .thenReturn(new RepositorySnapshot("D:/repo", "main", "abc", List.of()));
+        when(git.inspect(Path.of("D:/repo")))
+                .thenReturn(new RepositoryInfo(Path.of("D:/repo"), "main", "abc"));
         when(projects.findByRepositoryPath("D:/repo")).thenReturn(java.util.Optional.empty());
         when(projects.save(org.mockito.ArgumentMatchers.any(ProjectEntity.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -34,6 +35,29 @@ class ProjectServiceTest {
         assertThat(view.policy().prePushEnabled()).isTrue();
         assertThat(view.policy().preCommitEnabled()).isFalse();
         assertThat(view.policy().failOnSeverity()).isEqualTo("HIGH");
+    }
+
+    @Test
+    void importsProjectWithoutScanningAllChangedFiles() {
+        ProjectJpaRepository projects = mock(ProjectJpaRepository.class);
+        ReviewPolicyRepository policies = mock(ReviewPolicyRepository.class);
+        GitRepositoryService git = mock(GitRepositoryService.class);
+        when(git.inspect(Path.of("D:/large-repo")))
+                .thenReturn(new RepositoryInfo(Path.of("D:/large-repo"), "main", "abc"));
+        when(projects.findByRepositoryPath("D:/large-repo")).thenReturn(java.util.Optional.empty());
+        when(projects.save(org.mockito.ArgumentMatchers.any(ProjectEntity.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(policies.save(org.mockito.ArgumentMatchers.any(ReviewPolicyEntity.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        ProjectService service = new ProjectService(projects, policies, git);
+
+        ProjectService.ProjectView view = service.importProject("D:/large-repo");
+
+        assertThat(view.repositoryPath()).isEqualTo("D:/large-repo");
+        org.mockito.Mockito.verify(git).inspect(Path.of("D:/large-repo"));
+        org.mockito.Mockito.verify(git, org.mockito.Mockito.never())
+                .scan(Path.of("D:/large-repo"), GitScope.WORKTREE, null);
     }
 
     @Test

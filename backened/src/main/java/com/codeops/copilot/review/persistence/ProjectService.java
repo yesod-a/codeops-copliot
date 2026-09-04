@@ -1,9 +1,7 @@
 package com.codeops.copilot.review.persistence;
 
 import com.codeops.copilot.review.git.GitRepositoryService;
-import com.codeops.copilot.review.git.GitReviewException;
-import com.codeops.copilot.review.git.GitScope;
-import com.codeops.copilot.review.git.RepositorySnapshot;
+import com.codeops.copilot.review.git.RepositoryInfo;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,13 +25,13 @@ public class ProjectService {
 
     @Transactional
     public ProjectView importProject(String repositoryPath) {
-        RepositorySnapshot snapshot = gitRepositoryService.scan(Path.of(repositoryPath), GitScope.WORKTREE, null);
-        String canonicalPath = canonicalPath(snapshot.repositoryPath());
+        RepositoryInfo repository = gitRepositoryService.inspect(Path.of(repositoryPath));
+        String canonicalPath = canonicalPath(repository.repositoryPath().toString());
         String name = projectName(canonicalPath);
         ProjectEntity project = projectRepository.findByRepositoryPath(canonicalPath)
                 .orElseGet(() -> projectRepository.save(new ProjectEntity(name, canonicalPath,
-                        snapshot.branch(), snapshot.headCommit())));
-        project.updateMetadata(name, snapshot.branch(), snapshot.headCommit());
+                        repository.branch(), repository.headCommit())));
+        project.updateMetadata(name, repository.branch(), repository.headCommit());
         ProjectEntity savedProject = projectRepository.save(project);
         ReviewPolicyEntity policy = policyFor(savedProject);
         if (policy.getId() == null || policy.getProjectId() == null) {

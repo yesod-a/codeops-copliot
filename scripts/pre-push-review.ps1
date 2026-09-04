@@ -4,11 +4,19 @@ param(
     [string]$HistoryUrl = $(if ($env:CODEOPS_HISTORY_URL) { $env:CODEOPS_HISTORY_URL } else { 'http://127.0.0.1:8080/api/reviews' }),
     [ValidateSet('OFF', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL')]
     [string]$FailOnSeverity = $(if ($env:CODEOPS_REVIEW_FAIL_ON_SEVERITY) { $env:CODEOPS_REVIEW_FAIL_ON_SEVERITY } else { 'HIGH' }),
-    [int]$TimeoutSeconds = $(if ($env:CODEOPS_REVIEW_TIMEOUT_SECONDS) { [int]$env:CODEOPS_REVIEW_TIMEOUT_SECONDS } else { 120 }),
+    [int]$TimeoutSeconds = $(if ($env:CODEOPS_REVIEW_TIMEOUT_SECONDS) { [int]$env:CODEOPS_REVIEW_TIMEOUT_SECONDS } else { 600 }),
     [switch]$FailOpen,
     [string]$PushInput,
     [switch]$NoExecute
 )
+
+function Set-CodeOpsUtf8Output {
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [Console]::OutputEncoding = $utf8NoBom
+    $global:OutputEncoding = $utf8NoBom
+}
+
+Set-CodeOpsUtf8Output
 
 $script:SeverityRank = @{
     LOW = 1
@@ -27,10 +35,10 @@ function ConvertFrom-PrePushLine {
 
     [pscustomobject]@{
         LocalRef   = $parts[0]
-        RemoteRef  = $parts[1]
-        OldSha     = $parts[2]
-        NewSha     = $parts[3]
-        IsDeletion = $parts[3] -eq ('0' * 40)
+        NewSha     = $parts[1]
+        RemoteRef  = $parts[2]
+        OldSha     = $parts[3]
+        IsDeletion = $parts[1] -eq ('0' * 40)
     }
 }
 
@@ -60,6 +68,25 @@ function Invoke-GitOutput {
         throw "Git command failed: $message"
     }
     return $output
+}
+
+function Invoke-CodeOpsJsonPost {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$Body,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds
+    )
+
+    $utf8Body = [System.Text.Encoding]::UTF8.GetBytes($Body)
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $Uri -Method Post -ContentType 'application/json; charset=utf-8' -Body $utf8Body -TimeoutSec $TimeoutSeconds
+    return ConvertFrom-CodeOpsJsonBytes -Bytes $response.RawContentStream.ToArray()
+}
+
+function ConvertFrom-CodeOpsJsonBytes {
+    param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+
+    if ($Bytes.Length -eq 0) { return $null }
+    return [System.Text.Encoding]::UTF8.GetString($Bytes) | ConvertFrom-Json
 }
 
 function Test-GitRef {
@@ -161,6 +188,35 @@ function Test-ReviewablePath {
     return $Path -match '\.(java|kt|kts|py|js|jsx|ts|tsx|vue|go|rs|c|cc|cpp|h|hpp|cs|rb|php|sql|xml|yml|yaml|json|properties|gradle|md)$'
 }
 
+function Get-ReviewFileCharLimit {
+    $parsedValue = 0
+    if ([int]::TryParse($env:CODEOPS_REVIEW_FILE_CHARS, [ref]$parsedValue) -and $parsedValue -gt 0) {
+        return $parsedValue
+    }
+    return 30000
+}
+
+function New-ReviewPayload {
+    param(
+        [Parameter(Mandatory = $true)][string]$Repository,
+        [Parameter(Mandatory = $true)][string]$Title,
+        [Parameter(Mandatory = $true)][object[]]$Files,
+        [int]$MaxCharsPerFile = $(Get-ReviewFileCharLimit)
+    )
+
+    $requestFiles = @($Files | ForEach-Object {
+        $content = [string]$_.Patch
+        if ([string]::IsNullOrWhiteSpace($content)) { return }
+        $content = $content.Substring(0, [Math]::Min($content.Length, $MaxCharsPerFile))
+        @{ path = $_.Path; content = $content }
+    })
+    return @{
+        repository = $Repository
+        title = $Title
+        files = $requestFiles
+    } | ConvertTo-Json -Depth 8 -Compress
+}
+
 function Invoke-PushReview {
     param(
         [Parameter(Mandatory = $true)]$Update,
@@ -182,14 +238,10 @@ function Invoke-PushReview {
 
     $branch = ($Update.LocalRef -replace '^refs/heads/', '')
     $title = "pre-push 评审: $branch -> $($Update.RemoteRef)"
-    $aiPayload = @{
-        repository = $RepositoryRoot
-        title      = $title
-        files      = @($reviewFiles | ForEach-Object { @{ path = $_.Path; content = $_.Patch.Substring(0, [Math]::Min($_.Patch.Length, 300000)) } })
-    } | ConvertTo-Json -Depth 8 -Compress
-
     Write-Host "[CodeOps] 正在评审 $($reviewFiles.Count) 个变更文件 ($branch)。"
-    $aiResponse = Invoke-RestMethod -Uri $ReviewAiUrl -Method Post -ContentType 'application/json' -Body $aiPayload -TimeoutSec $ReviewTimeoutSeconds
+    $aiPayload = New-ReviewPayload -Repository $RepositoryRoot -Title $title -Files $reviewFiles
+    Write-Host "[CodeOps] 请求 LLM，包含 $($reviewFiles.Count) 个文件。"
+    $aiResponse = Invoke-CodeOpsJsonPost -Uri $ReviewAiUrl -Body $aiPayload -TimeoutSeconds $ReviewTimeoutSeconds
     $findings = @($aiResponse.findings)
     $blockingFindings = @(Get-BlockingFindings -Findings $findings -FailOnSeverity $ReviewFailOnSeverity)
 
@@ -220,6 +272,8 @@ function Invoke-PushReview {
                 category   = $_.category
                 severity   = $_.severity
                 line       = $_.line
+                start_line = $_.start_line
+                end_line   = $_.end_line
                 message    = $_.message
                 suggestion = $_.suggestion
                 evidence   = $_.evidence
@@ -227,7 +281,7 @@ function Invoke-PushReview {
             }
         })
     } | ConvertTo-Json -Depth 12 -Compress
-    Invoke-RestMethod -Uri $ReviewHistoryUrl -Method Post -ContentType 'application/json' -Body $savePayload -TimeoutSec 20 | Out-Null
+    Invoke-CodeOpsJsonPost -Uri $ReviewHistoryUrl -Body $savePayload -TimeoutSeconds 20 | Out-Null
 
     if ($blockingFindings.Count -gt 0) {
         Write-Host "[CodeOps] 评审阻止推送：发现 $($blockingFindings.Count) 个 $ReviewFailOnSeverity 及以上问题。"
@@ -275,4 +329,3 @@ if (-not $NoExecute) {
         exit 1
     }
 }
-

@@ -21,7 +21,7 @@ $hookDefinitions = @{
 #!/bin/sh
 set -eu
 PUSH_INPUT="`$(cat)"
-exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$hookRoot/scripts/git-review-hook.ps1" -Trigger pre-push -PushInput "`$PUSH_INPUT" "`$@"
+exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$hookRoot/scripts/git-review-hook.ps1" -Trigger pre-push -PushInput "`$PUSH_INPUT" -RemoteName "`$1"
 "@
     'pre-commit' = @"
 #!/bin/sh

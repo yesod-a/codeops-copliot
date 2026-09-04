@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { deleteReview, getAiHealth, getReviewDetails, importProject, listProjects, listReviews, saveReview, scanRepository, submitAiReview, updateProjectPolicy } from './reviewApi.js';
+import { deleteReview, getAiHealth, getReviewDetails, importProject, listProjects, listReviews, readSelectedGitFiles, saveReview, scanRepository, submitAiReview, updateProjectPolicy } from './reviewApi.js';
 
 describe('local Git review API', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -24,6 +24,20 @@ describe('local Git review API', () => {
       repository: 'C:/repo',
       title: 'Review local changes',
       files: [{ path: 'src/App.java', content: 'diff --git a/src/App.java' }]
+    });
+  });
+
+  it('requests selected Git files from Java before sending them to the LLM', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ path: 'src/App.java', content: 'fresh patch' }]), { status: 200 }));
+
+    await readSelectedGitFiles({
+      repositoryPath: 'C:/repo', scope: 'WORKTREE', baseRef: null, files: ['src/App.java']
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/repositories/read-selected');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      repositoryPath: 'C:/repo', scope: 'WORKTREE', baseRef: null, files: ['src/App.java']
     });
   });
 

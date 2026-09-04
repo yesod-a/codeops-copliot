@@ -5,6 +5,7 @@ import com.codeops.copilot.review.git.GitReviewException;
 import com.codeops.copilot.review.git.GitScope;
 import com.codeops.copilot.review.git.RepositorySnapshot;
 import com.codeops.copilot.review.persistence.ReviewHistoryService;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
@@ -67,6 +68,12 @@ public class ReviewController {
     @PostMapping("/repositories/scan")
     public RepositorySnapshot scan(@Valid @RequestBody RepositoryScanRequest request) {
         return repositoryService.scan(java.nio.file.Path.of(request.repositoryPath()), request.scope(), request.baseRef());
+    }
+
+    @PostMapping("/repositories/read-selected")
+    public List<ChangedFile> readSelected(@Valid @RequestBody ReadSelectedRequest request) {
+        return repositoryService.readSelected(java.nio.file.Path.of(request.repositoryPath()),
+                request.scope(), request.baseRef(), request.files());
     }
 
     @ExceptionHandler(ReviewHistoryService.ReviewNotFoundException.class)
@@ -132,6 +139,8 @@ public class ReviewController {
             @NotBlank String category,
             @NotNull Severity severity,
             @Positive int line,
+            @Positive @JsonAlias({"start_line", "startLine"}) Integer startLine,
+            @Positive @JsonAlias({"end_line", "endLine"}) Integer endLine,
             @NotBlank String message,
             @NotBlank String suggestion,
             String evidence,
@@ -139,6 +148,8 @@ public class ReviewController {
     ) {
         public ReviewFindingRequest {
             evidence = evidence == null ? "" : evidence;
+            startLine = startLine == null ? line : startLine;
+            endLine = endLine == null ? startLine : endLine;
         }
 
         ReviewHistoryService.FindingCommand toCommand() {
@@ -148,6 +159,17 @@ public class ReviewController {
     }
 
     public record RepositoryScanRequest(@NotBlank String repositoryPath, @NotNull GitScope scope, String baseRef) {
+    }
+
+    public record ReadSelectedRequest(
+            @NotBlank String repositoryPath,
+            @NotNull GitScope scope,
+            String baseRef,
+            @NotEmpty List<@NotBlank String> files
+    ) {
+        public ReadSelectedRequest {
+            files = List.copyOf(files);
+        }
     }
 
     public record ErrorResponse(String message) {

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { deleteProject, getAiHealth, getReviewDetails, importProject, listProjects, listReviews, saveReview, scanRepository, submitAiReview, updateProjectPolicy } from './api/reviewApi.js';
+import { deleteProject, getAiHealth, getReviewDetails, importProject, listProjects, listReviews, readSelectedGitFiles, saveReview, scanRepository, submitAiReview, updateProjectPolicy } from './api/reviewApi.js';
 import FindingList from './components/FindingList.vue';
 import ReviewForm from './components/ReviewForm.vue';
 import ReviewStatus from './components/ReviewStatus.vue';
@@ -146,13 +146,31 @@ async function handleSubmit(payload) {
   notice.value = '';
   localGitReview.value = payload.mode === 'git';
   try {
-    const aiResponse = await submitAiReview(payload);
+    let reviewPayload = payload;
+    if (payload.mode === 'git') {
+      const selectedPaths = payload.files.map((file) => file.path);
+      const freshFiles = await readSelectedGitFiles({
+        repositoryPath: payload.repositoryPath,
+        scope: payload.scope,
+        baseRef: payload.baseRef,
+        files: selectedPaths
+      });
+      const freshByPath = new Map(freshFiles.map((file) => [file.path, file]));
+      reviewPayload = {
+        ...payload,
+        files: payload.files.map((file) => ({
+          ...file,
+          content: freshByPath.get(file.path)?.content ?? ''
+        }))
+      };
+    }
+    const aiResponse = await submitAiReview(reviewPayload);
     const aiTask = makeAiTask(payload, aiResponse.findings);
     task.value = aiTask;
     connectionMessage.value = 'LLM 已连接';
 
     try {
-      const saved = await saveReview(buildSavePayload(payload, aiResponse));
+      const saved = await saveReview(buildSavePayload(reviewPayload, aiResponse));
       task.value = saved;
       await loadReviewHistory();
     } catch (saveError) {

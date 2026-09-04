@@ -6,12 +6,21 @@ param(
     [string]$PolicyUrl = $(if ($env:CODEOPS_POLICY_URL) { $env:CODEOPS_POLICY_URL } else { 'http://127.0.0.1:8080/api/projects/policy/resolve' }),
     [string]$AiUrl = $(if ($env:CODEOPS_AI_URL) { $env:CODEOPS_AI_URL } else { 'http://127.0.0.1:8090/api/ai/review' }),
     [string]$HistoryUrl = $(if ($env:CODEOPS_HISTORY_URL) { $env:CODEOPS_HISTORY_URL } else { 'http://127.0.0.1:8080/api/reviews' }),
-    [int]$TimeoutSeconds = $(if ($env:CODEOPS_REVIEW_TIMEOUT_SECONDS) { [int]$env:CODEOPS_REVIEW_TIMEOUT_SECONDS } else { 120 }),
+    [int]$TimeoutSeconds = $(if ($env:CODEOPS_REVIEW_TIMEOUT_SECONDS) { [int]$env:CODEOPS_REVIEW_TIMEOUT_SECONDS } else { 600 }),
+    [string]$RemoteName = 'origin',
     [switch]$NoExecute
 )
 
 $prePushScript = Join-Path $PSScriptRoot 'pre-push-review.ps1'
+$script:CodeOpsPolicyUrl = $PolicyUrl
+$script:CodeOpsAiUrl = $AiUrl
+$script:CodeOpsHistoryUrl = $HistoryUrl
+$script:CodeOpsTimeoutSeconds = $TimeoutSeconds
+$script:CodeOpsPushInput = $PushInput
+$script:CodeOpsRemoteName = $RemoteName
+$script:CodeOpsExecuteHook = -not [bool]$NoExecute
 . $prePushScript -NoExecute
+Set-CodeOpsUtf8Output
 
 function Test-TriggerEnabled {
     param(
@@ -32,7 +41,19 @@ function Get-ReviewPolicy {
     param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
 
     $query = [uri]::EscapeDataString($RepositoryRoot)
-    return Invoke-RestMethod -Uri "$PolicyUrl?repositoryPath=$query" -Method Get -TimeoutSec 5
+    return Invoke-RestMethod -Uri ($script:CodeOpsPolicyUrl + '?repositoryPath=' + $query) -Method Get -TimeoutSec 5
+}
+
+function Invoke-CodeOpsJsonPost {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$Body,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds
+    )
+
+    $utf8Body = [System.Text.Encoding]::UTF8.GetBytes($Body)
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $Uri -Method Post -ContentType 'application/json; charset=utf-8' -Body $utf8Body -TimeoutSec $TimeoutSeconds
+    return ConvertFrom-CodeOpsJsonBytes -Bytes $response.RawContentStream.ToArray()
 }
 
 function Get-DiffFilesForTrigger {
@@ -94,18 +115,15 @@ function Invoke-TriggerReview {
         [string]$HeadCommit
     )
 
-    $reviewFiles = @($Files | Select-Object -First 100)
+    $reviewFiles = @($Files | Where-Object { (Test-ReviewablePath $_.Path) -and -not [string]::IsNullOrWhiteSpace($_.Patch) } | Select-Object -First 100)
     if ($reviewFiles.Count -eq 0) {
         Write-Host "[CodeOps] $Trigger：没有可评审的代码变更，允许继续。"
         return $false
     }
-    $aiPayload = @{
-        repository = $RepositoryRoot
-        title = $Title
-        files = @($reviewFiles | ForEach-Object { @{ path = $_.Path; content = $_.Patch.Substring(0, [Math]::Min($_.Patch.Length, 300000)) } })
-    } | ConvertTo-Json -Depth 8 -Compress
     Write-Host "[CodeOps] $Trigger：正在评审 $($reviewFiles.Count) 个变更文件。"
-    $aiResponse = Invoke-RestMethod -Uri $AiUrl -Method Post -ContentType 'application/json' -Body $aiPayload -TimeoutSec $TimeoutSeconds
+    $aiPayload = New-ReviewPayload -Repository $RepositoryRoot -Title $Title -Files $reviewFiles
+    Write-Host "[CodeOps] $Trigger：请求 LLM，包含 $($reviewFiles.Count) 个文件。"
+    $aiResponse = Invoke-CodeOpsJsonPost -Uri $script:CodeOpsAiUrl -Body $aiPayload -TimeoutSeconds $script:CodeOpsTimeoutSeconds
     $findings = @($aiResponse.findings)
     $savePayload = @{
         requestId = [guid]::NewGuid().ToString()
@@ -119,9 +137,9 @@ function Invoke-TriggerReview {
         headCommit = $HeadCommit
         modelName = $(if ($env:AI_MODEL) { $env:AI_MODEL } else { 'hook-llm' })
         files = @($reviewFiles | ForEach-Object { @{ path = $_.Path; gitStatus = $_.GitStatus; additions = $_.Additions; deletions = $_.Deletions; patch = $_.Patch.Substring(0, [Math]::Min($_.Patch.Length, 1000000)); contentHash = $null } })
-        findings = @($findings | ForEach-Object { @{ file = $_.file; category = $_.category; severity = $_.severity; line = $_.line; message = $_.message; suggestion = $_.suggestion; evidence = $_.evidence; confidence = $_.confidence } })
+        findings = @($findings | ForEach-Object { @{ file = $_.file; category = $_.category; severity = $_.severity; line = $_.line; start_line = $_.start_line; end_line = $_.end_line; message = $_.message; suggestion = $_.suggestion; evidence = $_.evidence; confidence = $_.confidence } })
     } | ConvertTo-Json -Depth 12 -Compress
-    Invoke-RestMethod -Uri $HistoryUrl -Method Post -ContentType 'application/json' -Body $savePayload -TimeoutSec 20 | Out-Null
+    Invoke-CodeOpsJsonPost -Uri $script:CodeOpsHistoryUrl -Body $savePayload -TimeoutSeconds 20 | Out-Null
 
     $blocking = @(Get-BlockingFindings -Findings $findings -FailOnSeverity $(if ($Policy.failOnSeverity) { $Policy.failOnSeverity } else { 'HIGH' }))
     if ($blocking.Count -gt 0) {
@@ -133,10 +151,11 @@ function Invoke-TriggerReview {
     return $false
 }
 
-if (-not $NoExecute) {
+if ($script:CodeOpsExecuteHook) {
+    Write-Host '[CodeOps] pre-push Hook 已启动。'
     $isAdvisory = $Trigger -eq 'post-merge'
     try {
-        $repositoryRoot = (Invoke-GitOutput @('rev-parse', '--show-toplevel'))[0].ToString().Trim()
+        $repositoryRoot = (@(Invoke-GitOutput @('rev-parse', '--show-toplevel')))[0].ToString().Trim()
         $policy = Get-ReviewPolicy -RepositoryRoot $repositoryRoot
         if (-not (Test-TriggerEnabled -Policy $policy -Trigger $Trigger)) {
             Write-Host "[CodeOps] 项目未启用 $Trigger 评审，跳过。"
@@ -144,12 +163,13 @@ if (-not $NoExecute) {
         }
 
         if ($Trigger -eq 'pre-push') {
-            $updates = @($PushInput -split "`r?`n" | Where-Object { $_.Trim() })
+            $updates = @($script:CodeOpsPushInput -split "`r?`n" | Where-Object { $_.Trim() })
+            Write-Host "[CodeOps] pre-push 收到推送记录 $($updates.Count) 条。"
             $blocked = $false
             foreach ($line in $updates) {
                 $update = ConvertFrom-PrePushLine $line
                 if ($update.IsDeletion) { continue }
-                $baseSha = Resolve-DiffBase -Update $update -RemoteName $(if ($args.Count -gt 0) { $args[0] } else { 'origin' })
+                $baseSha = Resolve-DiffBase -Update $update -RemoteName $script:CodeOpsRemoteName
                 $files = @(Get-ChangedFiles -NewSha $update.NewSha -BaseSha $baseSha)
                 $blocked = (Invoke-TriggerReview -Files $files -RepositoryRoot $repositoryRoot -Title "pre-push 评审: $($update.LocalRef) -> $($update.RemoteRef)" -Policy $policy -Scope 'BASE_COMMIT' -BaseRef $baseSha -Branch ($update.LocalRef -replace '^refs/heads/', '') -HeadCommit $update.NewSha) -or $blocked
             }
@@ -157,8 +177,8 @@ if (-not $NoExecute) {
             exit 0
         }
 
-        $branch = (Invoke-GitOutput @('branch', '--show-current'))[0].ToString().Trim()
-        $headCommit = (Invoke-GitOutput @('rev-parse', 'HEAD'))[0].ToString().Trim()
+        $branch = (@(Invoke-GitOutput @('branch', '--show-current')))[0].ToString().Trim()
+        $headCommit = (@(Invoke-GitOutput @('rev-parse', 'HEAD')))[0].ToString().Trim()
         if ($Trigger -eq 'pre-commit') {
             $files = @(Get-DiffFilesForTrigger -Trigger $Trigger)
             $blocked = Invoke-TriggerReview -Files $files -RepositoryRoot $repositoryRoot -Title "pre-commit 评审: $branch" -Policy $policy -Scope 'STAGED' -Branch $branch -HeadCommit $headCommit
