@@ -1,9 +1,11 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { deleteProject, getAiHealth, getReviewDetails, importProject, listProjects, listReviews, readSelectedGitFiles, saveReview, scanRepository, submitAiReview, updateProjectPolicy } from './api/reviewApi.js';
+import { deleteProject, getAiHealth, getCurrentUser, getReviewDetails, importProject, listProjects, listReviews, login, logout, readSelectedGitFiles, registerCentralProject, saveReview, scanRepository, submitAiReview, updateProjectPolicy } from './api/reviewApi.js';
 import FindingList from './components/FindingList.vue';
 import ReviewForm from './components/ReviewForm.vue';
 import ReviewStatus from './components/ReviewStatus.vue';
+import RuleCenter from './components/RuleCenter.vue';
+import UserManagement from './components/UserManagement.vue';
 import { calculateRiskScore, demoTask, getFindingCounts, getFindingText, getStatusMeta } from './reviewState.js';
 import { getHistoryId, getRoute } from './navigation.js';
 
@@ -29,15 +31,33 @@ const projectError = ref('');
 const projectPathInput = ref('');
 const selectedProjectId = ref('');
 const policySaving = ref(false);
+const projectPage = ref(1);
+const historyPage = ref(1);
+const pageSize = 10;
+const projectPageSize = 3;
 let pollingTimer;
+const currentUser = ref(null);
+const authLoading = ref(true);
+const loginLoading = ref(false);
+const loginError = ref('');
+const loginForm = ref({ username: '', password: '' });
+const centralDeployment = import.meta.env.VITE_CODEOPS_DEPLOYMENT_MODE === 'central';
 
 const selectedProject = computed(() => projects.value.find((project) => String(project.id) === String(selectedProjectId.value)) ?? null);
+const visibleProjects = computed(() => projects.value.slice((projectPage.value - 1) * projectPageSize, projectPage.value * projectPageSize));
+const projectTotalPages = computed(() => Math.max(1, Math.ceil(projects.value.length / projectPageSize)));
+const visibleHistory = computed(() => reviewHistory.value.slice((historyPage.value - 1) * pageSize, historyPage.value * pageSize));
+const historyTotalPages = computed(() => Math.max(1, Math.ceil(reviewHistory.value.length / pageSize)));
+const detailFilesPage = ref(1);
+const visibleDetailFiles = computed(() => (task.value.files ?? []).slice((detailFilesPage.value - 1) * pageSize, detailFilesPage.value * pageSize));
+const detailFilesTotalPages = computed(() => Math.max(1, Math.ceil((task.value.files ?? []).length / pageSize)));
 
 async function loadProjects() {
   projectsLoading.value = true;
   projectError.value = '';
   try {
     projects.value = await listProjects();
+    projectPage.value = Math.min(projectPage.value, projectTotalPages.value);
     if (selectedProjectId.value && !selectedProject.value) selectedProjectId.value = '';
   } catch (error) {
     projectError.value = error.message || '无法加载项目列表。';
@@ -48,16 +68,19 @@ async function loadProjects() {
 
 async function handleImportProject() {
   if (!projectPathInput.value.trim()) {
-    projectError.value = '请输入本机 Git 仓库路径。';
+    projectError.value = centralDeployment ? '请输入仓库标识。' : '请输入本机 Git 仓库路径。';
     return;
   }
   projectsLoading.value = true;
   projectError.value = '';
   try {
-    const project = await importProject(projectPathInput.value.trim());
+    const value = projectPathInput.value.trim();
+    const project = centralDeployment
+      ? await registerCentralProject(value.replace(/\.git\/?$/, '').split(/[/:]/).filter(Boolean).at(-1) || value, value)
+      : await importProject(value);
     await loadProjects();
     selectedProjectId.value = project.id;
-    projectPathInput.value = project.repositoryPath;
+    projectPathInput.value = project.remoteUrl ?? project.repositoryPath;
   } catch (error) {
     projectError.value = error.message || '项目引入失败。';
   } finally {
@@ -98,6 +121,7 @@ async function loadReviewHistory() {
   historyError.value = '';
   try {
     reviewHistory.value = await listReviews({ limit: 20, offset: 0 });
+    historyPage.value = Math.min(historyPage.value, historyTotalPages.value);
   } catch (error) {
     historyError.value = error.message || '无法加载评审历史。';
   } finally {
@@ -106,11 +130,24 @@ async function loadReviewHistory() {
 }
 
 function syncRoute() {
-  route.value = getRoute(window.location.hash);
+  const nextRoute = getRoute(window.location.hash);
+  if (nextRoute === 'users' && currentUser.value?.role !== 'ADMIN') {
+    route.value = 'review';
+    if (window.location.hash !== '#review') window.location.hash = '#review';
+    return;
+  }
+  route.value = nextRoute;
   if (route.value === 'history') loadReviewHistory();
   if (route.value === 'history-detail') {
     const id = getHistoryId(window.location.hash);
     if (id && id !== historyDetailId.value) loadHistoryDetail(id);
+  }
+}
+
+function redirectUnauthorizedUserRoute() {
+  if (getRoute(window.location.hash) === 'users' && currentUser.value?.role !== 'ADMIN') {
+    route.value = 'review';
+    if (window.location.hash !== '#review') window.location.hash = '#review';
   }
 }
 
@@ -246,6 +283,7 @@ async function loadHistoryDetail(id) {
   try {
     const detail = await getReviewDetails(id);
     task.value = detail;
+    detailFilesPage.value = 1;
     localGitReview.value = detail.sourceType === 'GIT';
     notice.value = '';
   } catch (error) {
@@ -294,22 +332,70 @@ function exportMarkdown() {
 
 onMounted(() => {
   window.addEventListener('hashchange', syncRoute);
-  checkAiHealth();
-  loadProjects();
-  loadReviewHistory();
-  if (route.value === 'history-detail') {
-    const id = getHistoryId(window.location.hash);
-    if (id) loadHistoryDetail(id);
-  }
+  initializeAuth();
 });
 onBeforeUnmount(() => {
   window.clearTimeout(pollingTimer);
   window.removeEventListener('hashchange', syncRoute);
 });
+
+async function initializeAuth() {
+  authLoading.value = true;
+  try {
+    currentUser.value = await getCurrentUser();
+    redirectUnauthorizedUserRoute();
+    checkAiHealth();
+    loadProjects();
+    loadReviewHistory();
+    if (route.value === 'history-detail') {
+      const id = getHistoryId(window.location.hash);
+      if (id) loadHistoryDetail(id);
+    }
+  } catch {
+    currentUser.value = null;
+  } finally {
+    authLoading.value = false;
+  }
+}
+
+async function handleLogin() {
+  loginLoading.value = true;
+  loginError.value = '';
+  try {
+    currentUser.value = await login(loginForm.value.username.trim(), loginForm.value.password);
+    loginForm.value.password = '';
+    redirectUnauthorizedUserRoute();
+    checkAiHealth();
+    loadProjects();
+    loadReviewHistory();
+  } catch (error) {
+    loginError.value = error.message || '登录失败，请检查用户名和密码。';
+  } finally {
+    loginLoading.value = false;
+  }
+}
+
+async function handleLogout() {
+  await logout().catch(() => {});
+  currentUser.value = null;
+  window.location.hash = '#review';
+}
 </script>
 
 <template>
-  <div class="app-shell">
+  <div v-if="authLoading" class="auth-loading">正在验证登录状态...</div>
+  <div v-else-if="!currentUser" class="auth-page">
+    <form class="auth-card" @submit.prevent="handleLogin">
+      <div class="brand-lockup auth-brand"><div class="brand-mark"><span></span><span></span><span></span></div><div><strong>CodeOps</strong><span>Copilot</span></div></div>
+      <h1>登录 CodeOps</h1>
+      <p class="intro-copy">登录后管理项目、评审规则和历史记录。</p>
+      <p v-if="loginError" class="notice-banner"><span>!</span>{{ loginError }}</p>
+      <label class="field"><span>用户名</span><input v-model="loginForm.username" autocomplete="username" required /></label>
+      <label class="field"><span>密码</span><input v-model="loginForm.password" type="password" autocomplete="current-password" required /></label>
+      <button class="primary-button auth-submit" type="submit" :disabled="loginLoading">{{ loginLoading ? '登录中...' : '登录' }}</button>
+    </form>
+  </div>
+  <div v-else class="app-shell">
     <aside class="sidebar">
       <div class="brand-lockup">
         <div class="brand-mark"><span></span><span></span><span></span></div>
@@ -320,6 +406,8 @@ onBeforeUnmount(() => {
         <a class="nav-item" :class="{ active: route === 'review' }" href="#review"><span class="nav-icon">◈</span>评审工作台</a>
         <a class="nav-item" :class="{ active: route === 'projects' }" href="#projects"><span class="nav-icon">▦</span>项目</a>
         <a class="nav-item" :class="{ active: route === 'history' || route === 'history-detail' }" href="#history"><span class="nav-icon">◷</span>历史记录</a>
+        <a class="nav-item" :class="{ active: route === 'rules' }" href="#rules"><span class="nav-icon">☷</span>评审规则</a>
+        <a v-if="currentUser?.role === 'ADMIN'" class="nav-item" :class="{ active: route === 'users' }" href="#users"><span class="nav-icon">♙</span>用户管理</a>
         <p class="nav-label nav-label-spaced">系统</p>
         <span class="nav-item nav-item-disabled"><span class="nav-icon">⚙</span>设置（即将推出）</span>
       </nav>
@@ -328,14 +416,14 @@ onBeforeUnmount(() => {
           <span class="pulse-dot"></span>
           <div><span>评审引擎</span><strong>{{ aiHealth?.status === 'ready' ? 'LangChain 大模型' : 'LLM 服务未启用' }}</strong></div>
         </div>
-        <div class="user-card"><span class="avatar">YL</span><div><strong>Yu Li</strong><span>开发者</span></div><span class="more-icon">•••</span></div>
+        <div class="user-card"><span class="avatar">{{ currentUser?.displayName?.slice(0, 2) || 'U' }}</span><div><strong>{{ currentUser?.displayName }}</strong><span>{{ currentUser?.role === 'ADMIN' ? '管理员' : '用户' }}</span></div><button class="more-icon" type="button" title="退出登录" @click="handleLogout">退出</button></div>
       </div>
     </aside>
 
     <main class="main-content" id="review">
       <header class="topbar">
-        <div class="breadcrumb"><span>工作区</span><b>/</b><strong>{{ route === 'review' ? '评审工作台' : route === 'projects' ? '项目' : route === 'history-detail' ? '评审详情' : '历史记录' }}</strong></div>
-        <div class="topbar-actions"><span class="connection-pill"><span class="pulse-dot"></span>{{ connectionMessage }}</span><button class="icon-button" title="帮助">?</button><span class="avatar small">YL</span></div>
+        <div class="breadcrumb"><span>工作区</span><b>/</b><strong>{{ route === 'review' ? '评审工作台' : route === 'projects' ? '项目' : route === 'rules' ? '评审规则' : route === 'users' ? '用户管理' : route === 'history-detail' ? '评审详情' : '历史记录' }}</strong></div>
+          <div class="topbar-actions"><span class="connection-pill"><span class="pulse-dot"></span>{{ connectionMessage }}</span><button class="icon-button" title="帮助">?</button><span class="avatar small">{{ currentUser?.displayName?.slice(0, 2) || 'U' }}</span></div>
       </header>
 
       <div v-if="route === 'review'" class="content-wrap">
@@ -359,6 +447,7 @@ onBeforeUnmount(() => {
             :scanning="scanning"
             :scan-result="scanResult"
             :scan-error="scanError"
+            :central-mode="centralDeployment"
             :projects="projects"
             :selected-project-id="selectedProjectId"
             @scan="handleScan"
@@ -375,19 +464,19 @@ onBeforeUnmount(() => {
 
       <div v-else-if="route === 'projects'" class="content-wrap">
         <section class="page-intro">
-          <div><p class="eyebrow">项目管理</p><h1>本地项目</h1><p class="intro-copy">引入本机 Git 仓库，并配置代码评审触发策略。</p></div>
+          <div><p class="eyebrow">项目管理</p><h1>{{ centralDeployment ? '评审项目' : '本地项目' }}</h1><p class="intro-copy">{{ centralDeployment ? '登记代码仓库标识，并配置代码评审触发策略。' : '引入本机 Git 仓库，并配置代码评审触发策略。' }}</p></div>
           <button class="secondary-button" type="button" @click="goTo('review')"><span>↗</span>开始评审</button>
         </section>
         <p v-if="projectError" class="notice-banner"><span>!</span>{{ projectError }}</p>
         <section class="panel project-import-panel">
-          <div class="panel-heading"><div><p class="eyebrow">引入项目</p><h2>连接本机 Git 仓库</h2></div><span v-if="projectsLoading" class="scan-message">处理中...</span></div>
+          <div class="panel-heading"><div><p class="eyebrow">{{ centralDeployment ? '登记项目' : '引入项目' }}</p><h2>{{ centralDeployment ? '配置评审仓库' : '连接本机 Git 仓库' }}</h2></div><span v-if="projectsLoading" class="scan-message">处理中...</span></div>
           <div class="project-import-form">
-            <label class="field"><span>仓库路径</span><input v-model="projectPathInput" type="text" placeholder="D:\\development\\project\\repository" /></label>
-            <button class="primary-button project-import-button" type="button" :disabled="projectsLoading" @click="handleImportProject">{{ projectsLoading ? '引入中...' : '引入项目' }}</button>
+            <label class="field"><span>{{ centralDeployment ? '仓库标识' : '仓库路径' }}</span><input v-model="projectPathInput" type="text" :placeholder="centralDeployment ? '例如 acme/order-service' : 'D:\\development\\project\\repository'" /></label>
+            <button class="primary-button project-import-button" type="button" :disabled="projectsLoading" @click="handleImportProject">{{ projectsLoading ? '处理中...' : (centralDeployment ? '登记项目' : '引入项目') }}</button>
           </div>
         </section>
         <section v-if="projects.length" class="project-list">
-          <article v-for="project in projects" :key="project.id" class="panel project-item">
+          <article v-for="project in visibleProjects" :key="project.id" class="panel project-item">
             <div class="panel-heading">
               <div><p class="eyebrow">已引入项目</p><h2>{{ project.name }}</h2><p class="project-path mono-value">{{ project.repositoryPath }}</p></div>
               <button class="ghost-button danger-button" type="button" @click="handleProjectDelete(project)">删除项目</button>
@@ -408,7 +497,23 @@ onBeforeUnmount(() => {
             <div class="project-item-actions"><button class="secondary-button" type="button" :disabled="policySaving" @click="handlePolicySave(project)">{{ policySaving ? '保存中...' : '保存评审策略' }}</button><button class="primary-button project-review-button" type="button" @click="selectedProjectId = project.id; goTo('review')">使用此项目评审</button></div>
           </article>
         </section>
+        <div v-if="projects.length" class="pagination" aria-label="项目分页"><button type="button" :disabled="projectPage <= 1" @click="projectPage--">上一页</button><span>第 {{ projectPage }} / {{ projectTotalPages }} 页</span><button type="button" :disabled="projectPage >= projectTotalPages" @click="projectPage++">下一页</button></div>
         <div v-else-if="!projectsLoading" class="empty-state history-empty"><span class="empty-icon">+</span><strong>还没有引入项目</strong><span>引入仓库后，可以在工作台选择项目并启用 Git Hook 评审。</span></div>
+      </div>
+
+      <div v-else-if="route === 'rules'" class="content-wrap">
+        <section class="page-intro">
+          <div><p class="eyebrow">本机规则配置</p><h1>评审规则中心</h1><p class="intro-copy">为全部本机项目或单独项目配置会送入评审 Agent 的检查规则。</p></div>
+          <button class="secondary-button" type="button" @click="goTo('review')"><span>↗</span>开始评审</button>
+        </section>
+        <RuleCenter :projects="projects" />
+      </div>
+
+      <div v-else-if="route === 'users' && currentUser?.role === 'ADMIN'" class="content-wrap">
+        <section class="page-intro">
+          <div><p class="eyebrow">系统管理</p><h1>用户管理</h1><p class="intro-copy">管理用户访问、Local Client 设备 Token 与项目评审授权。</p></div>
+        </section>
+        <UserManagement :projects="projects" />
       </div>
 
       <div v-else-if="route === 'history'" class="content-wrap">
@@ -419,11 +524,12 @@ onBeforeUnmount(() => {
         <p v-if="historyError" class="notice-banner"><span>!</span>{{ historyError }}</p>
         <p v-else-if="historyLoading" class="scan-message">正在加载评审历史...</p>
         <section v-else-if="reviewHistory.length" class="history-list">
-          <article v-for="item in reviewHistory" :key="item.id" class="history-item" tabindex="0" @click="openHistory(item.id)" @keydown.enter="openHistory(item.id)">
+          <article v-for="item in visibleHistory" :key="item.id" class="history-item" tabindex="0" @click="openHistory(item.id)" @keydown.enter="openHistory(item.id)">
             <div class="history-item-main"><span class="repo-mark">{{ item.sourceType === 'GIT' ? 'GIT' : 'PR' }}</span><div><strong>{{ item.title }}</strong><span>{{ item.sourceType === 'GIT' ? '本地 Git' : '手动评审' }} · {{ item.repository }}</span></div></div>
             <div class="history-item-meta"><span class="status-badge" :class="`tone-${getStatusMeta(item.status).tone}`"><span class="status-dot"></span>{{ getStatusMeta(item.status).label }}</span><time>{{ item.completedAt || item.createdAt ? new Date(item.completedAt || item.createdAt).toLocaleString('zh-CN') : '-' }}</time></div>
           </article>
         </section>
+        <div v-if="reviewHistory.length" class="pagination" aria-label="历史记录分页"><button type="button" :disabled="historyPage <= 1" @click="historyPage--">上一页</button><span>第 {{ historyPage }} / {{ historyTotalPages }} 页</span><button type="button" :disabled="historyPage >= historyTotalPages" @click="historyPage++">下一页</button></div>
         <div v-else class="empty-state history-empty"><span class="empty-icon">◷</span><strong>暂无评审记录</strong><span>提交一次本地 Git 或手动评审后，记录会显示在这里。</span><button class="primary-button" type="button" @click="goTo('review')">创建第一条评审</button></div>
       </div>
 
@@ -450,6 +556,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
           <div class="report-bar"><div><span class="report-status" :class="`tone-${statusMeta.tone}`"><span class="status-dot"></span>{{ statusMeta.label }}</span><span class="report-updated">完成于 · {{ task.completedAt || task.createdAt ? new Date(task.completedAt || task.createdAt).toLocaleString('zh-CN') : '-' }}</span></div><button class="ghost-button" type="button" @click="exportMarkdown">导出 Markdown <span>↓</span></button></div>
+          <section v-if="task.files?.length" class="detail-files panel"><div class="panel-heading"><div><p class="eyebrow">变更范围</p><h2>评审变更文件</h2></div><span>{{ task.files.length }} 个文件</span></div><div class="detail-file-list"><div v-for="file in visibleDetailFiles" :key="file.path" class="detail-file-row"><code>{{ file.path }}</code><span class="git-status">{{ file.gitStatus || 'CHANGED' }}</span><span class="file-stats"><b>+{{ file.additions ?? 0 }}</b><i>-{{ file.deletions ?? 0 }}</i></span></div></div><div class="pagination" aria-label="变更文件分页"><button type="button" :disabled="detailFilesPage <= 1" @click="detailFilesPage--">上一页</button><span>第 {{ detailFilesPage }} / {{ detailFilesTotalPages }} 页</span><button type="button" :disabled="detailFilesPage >= detailFilesTotalPages" @click="detailFilesPage++">下一页</button></div></section>
           <FindingList v-model="activeFilter" :findings="task.findings" />
         </template>
       </div>

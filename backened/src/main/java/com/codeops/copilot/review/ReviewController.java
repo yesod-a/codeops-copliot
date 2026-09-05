@@ -48,10 +48,14 @@ public class ReviewController {
     }
 
     @GetMapping("/reviews")
-    public List<ReviewHistoryService.ReviewHistorySummary> list(
-            @RequestParam(defaultValue = "20") @Min(1) int limit,
-            @RequestParam(defaultValue = "0") @PositiveOrZero int offset) {
-        return historyService.list(limit, offset);
+    public Object list(@RequestParam(required = false) Integer page,
+                       @RequestParam(required = false) Integer size,
+                       @RequestParam(required = false) @Min(1) Integer limit,
+                       @RequestParam(required = false) @PositiveOrZero Integer offset) {
+        if (page != null || size != null) {
+            return historyService.listPage(page == null ? 0 : page, size == null ? 10 : size);
+        }
+        return historyService.list(limit == null ? 20 : limit, offset == null ? 0 : offset);
     }
 
     @GetMapping("/reviews/{id}")

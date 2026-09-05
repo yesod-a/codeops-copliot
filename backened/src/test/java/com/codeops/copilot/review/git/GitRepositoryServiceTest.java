@@ -99,7 +99,12 @@ class GitRepositoryServiceTest {
     }
 
     private void run(Path directory, String... arguments) throws IOException, InterruptedException {
-        Process process = new ProcessBuilder(concat("git", arguments)).directory(directory.toFile()).start();
+        java.util.List<String> command = new java.util.ArrayList<>();
+        command.add("git");
+        command.add("-c");
+        command.add("core.hooksPath=");
+        command.addAll(java.util.Arrays.asList(arguments));
+        Process process = new ProcessBuilder(command).directory(directory.toFile()).start();
         if (process.waitFor() != 0) {
             throw new AssertionError(new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8));
         }

@@ -1,17 +1,6 @@
 # CodeOps Copilot
 
-CodeOps Copilot is a Java backend plus Vue frontend for AI-assisted code reviews. The LangChain Python service performs LLM reviews, while Java scans local Git repositories and persists review history in MySQL.
-
-## Run the backend
-
-Requires Java 21 and Maven 3.9+.
-
-```powershell
-cd backened
-mvn spring-boot:run
-```
-
-The API is available at `http://localhost:8080`.
+CodeOps Copilot is a centralized AI code review service with a local Git Hook client. Docker hosts the frontend, Java API, LangChain reviewer, and MySQL; each developer machine reads its own Git repository and uploads only relative paths and patches.
 
 ## Run all services with Docker
 
@@ -24,15 +13,13 @@ Copy-Item .env.example .env
 # Edit .env and set AI_API_KEY
 ```
 
-Start MySQL, the frontend, and Python LangChain backend with Docker, and start the Java backend locally in the same command:
+Start all four services in Docker:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-local-stack.ps1
 ```
 
-Open `http://localhost:5173`. The Nginx container routes `/api/repositories/*` to the Java service on the host at `http://host.docker.internal:8080`, and `/api/ai/*` to the Python service container. The workbench sends selected Git patches directly to `/api/ai/review`; Java remains responsible for local Git scanning.
-
-Java runs directly on Windows, so the Git review form can use any existing local Windows path, for example `D:\python_development\pycharm_develop_space\graduation-design`. Docker no longer mounts a fixed repository directory.
+Open `http://localhost:5173`. Nginx routes browser API calls to the Java container, and Java calls the LLM container through the Compose network. The server never receives a developer absolute path.
 
 Stop the stack with:
 
@@ -40,28 +27,75 @@ Stop the stack with:
 docker compose down
 ```
 
-The script keeps the Java process in the foreground. Press `Ctrl+C` to stop Java, then run `docker compose down` to stop the Docker services. MySQL data is kept in the named `mysql-data` volume. The Docker database uses host port `3307` by default to avoid conflicts with an existing local MySQL installation.
+MySQL data is kept in the named `mysql-data` volume. The database uses host port `3307` by default.
 
-## Install the pre-push review hook
+## Central review mode
 
-Install the hook once from the repository root:
+For a shared server deployment, the developer machine only runs the Git Hook client and uploads relative paths plus patches; it never calls the LLM directly.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-pre-push-hook.ps1
-```
-
-Before each `git push`, the hook reads Git's outgoing commit range, calls the LangChain service at `http://127.0.0.1:8090/api/ai/review`, saves the result through Java, and blocks the push when a `HIGH` or `CRITICAL` finding is returned. A failed review also blocks the push by default.
-
-Useful local settings:
+Initialize the first administrator once (set `CODEOPS_BOOTSTRAP_TOKEN` on the server and use the same value in the request):
 
 ```powershell
-$env:CODEOPS_REVIEW_FAIL_ON_SEVERITY = 'MEDIUM'
-$env:CODEOPS_REVIEW_TIMEOUT_SECONDS = '600'
-$env:CODEOPS_REVIEW_FAIL_OPEN = 'true'
-$env:CODEOPS_REVIEW_FILE_CHARS = '30000'
+Invoke-RestMethod -Method Post -Uri http://localhost:5173/api/management/bootstrap `
+  -Headers @{ 'X-CodeOps-Bootstrap-Token' = $env:CODEOPS_BOOTSTRAP_TOKEN } `
+  -ContentType 'application/json' -Body '{"username":"admin","displayName":"管理员","password":"change-this-password"}'
 ```
 
-The Hook excludes binary artifacts such as `.pyc`, truncates each file to `CODEOPS_REVIEW_FILE_CHARS`, and sends all reviewable text changes in one request. The Python backend then groups files by size, reviewing each group with a shared Main agent call; only genuinely large groups receive an additional Plan call. Use `CODEOPS_REVIEW_FAIL_OPEN=true` only when the local AI service is unavailable and you want to allow the push. Git hooks can be bypassed with `git push --no-verify`, so GitHub branch protection and required CI checks should remain the final merge gate.
+The response contains a one-time agent token. Use the bootstrap username and password in the web login page. An administrator can then create users (with a password), create additional agent tokens, and grant project roles through `/api/management/*`.
+
+Open `http://localhost:5173` and sign in with the bootstrap account. Browser requests use a server-side HttpOnly Session cookie; local Git hooks continue to use their separate `cop_...` Agent Token.
+
+For the current local development database, the available test accounts are:
+
+```text
+admin     / 123456   (administrator)
+developer / 123456   (ordinary user)
+```
+
+These credentials are for local development only. Production deployments should use stronger, unique passwords.
+
+## Central project identity
+
+Register shared projects from their Git remote URL, never from a developer workstation path. The server normalizes HTTPS and SSH forms of the same remote to one repository key, for example `git.example.com/acme/order-service`.
+
+```json
+{
+  "name": "Order Service",
+  "remoteUrl": "https://git.example.com/acme/order-service.git"
+}
+```
+
+An installed Git Hook client resolves its Git `origin` through `POST /api/client/projects/resolve` using its Agent Token. The response is disabled for unregistered repositories and is rejected for users without a review-capable project role. The central review endpoint also binds a review request to that resolved repository key before invoking the LLM.
+
+## Install the script-only Git Hook client
+
+The developer machine does not run a resident service or Java client. Run the initializer once for the Windows user that performs Git operations. It stores settings under `%LOCALAPPDATA%\CodeOps`, stores the Agent Token with Windows DPAPI, and installs global `pre-commit`, `pre-push`, and `post-merge` hooks.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\initialize-codeops-client.ps1 `
+  -ServerUrl http://localhost:5173 `
+  -AgentToken cop_...
+```
+
+The Hook discovers the current repository with `git rev-parse --show-toplevel`, reads `git remote get-url origin`, resolves the project and user permission through `/api/client/projects/resolve`, then sends the Git diff to `/api/agent/reviews`. Only remote identity, repository-relative paths, and patches are sent; no local absolute path or token is included in the JSON payload. Unregistered remotes are skipped. Registered projects without review permission, or high-severity findings, block `pre-push` by default.
+
+Uninstall and restore the previous global Hook path with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\uninstall-pre-push-hook.ps1
+```
+
+To change the local client settings, rerun the initializer with `-Force`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\initialize-codeops-client.ps1 `
+  -ServerUrl http://localhost:5173 `
+  -AgentToken cop_... `
+  -TimeoutSeconds 900 `
+  -FailOpen -Force
+```
+
+The hook excludes binary artifacts such as `.pyc` and sends the central request as one review operation. The Python backend groups files by size internally and performs the OCR-style plan and review flow. Use `-FailOpen` or set the stored `failOpen` option only when you explicitly want to allow a push after a service failure. Git hooks can be bypassed with `git push --no-verify`, so branch protection and required CI checks should remain the final merge gate.
 
 ## Run the frontend
 
@@ -73,7 +107,7 @@ npm install
 npm run dev
 ```
 
-Open the Vite URL shown in the terminal. Git scanning under `/api/repositories/*` is proxied to Java at `http://localhost:8080`; AI review requests under `/api/ai/*` are proxied to the LangChain service at `http://localhost:8090`. The Git review button sends the selected patch content directly to the LLM service. When a service is unavailable, the page shows the corresponding connection error.
+Open the Vite URL shown in the terminal. In Docker mode, browser and client requests use the frontend URL (`http://localhost:5173`); Nginx routes `/api/` to the internal Java service (`backend:8080`), and Java routes reviews to the internal LangChain service (`llm-backend:8090`). The Git review button sends the selected patch content directly to the configured API. When a service is unavailable, the page shows the corresponding connection error.
 
 ## Validate
 
@@ -100,4 +134,4 @@ GET    /api/reviews/{id}
 DELETE /api/reviews/{id}
 ```
 
-`/api/ai/*` is provided by the LangChain service on port `8090`. Java on port `8080` only handles local Git scanning, MySQL persistence, and history queries; it does not call the LLM.
+`/api/ai/*` is provided by the LangChain service on its internal port `8090`. In central mode Java on its internal port `8080` additionally authenticates local clients, calls the LLM service, applies project blocking policy, and persists review history. Only the frontend port is required for normal browser and hook access.

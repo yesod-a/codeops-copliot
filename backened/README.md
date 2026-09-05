@@ -1,47 +1,45 @@
-# CodeOps Copilot Java Backend
+# CodeOps Copilot Central API
 
-Java 服务负责本机 Git 仓库扫描，以及将 Python LangChain 服务返回的评审结果保存到 MySQL。大模型推理由 `llm-backend` 完成，Java 不再执行评审推理。
+The Java service is the central API for authentication, project policy, rules, review history, and authenticated Git Hook review requests. In a shared deployment it does not read a developer workstation path. The local CodeOps Client reads Git changes and sends relative paths and patches to `POST /api/agent/reviews`.
 
-## API
+## Container deployment
+
+Run the complete stack from the repository root. The `backend` container connects to MySQL and `llm-backend` through the Compose network.
+
+```powershell
+Copy-Item .env.example .env
+# Set AI_API_KEY and CODEOPS_BOOTSTRAP_TOKEN in .env.
+docker compose up -d --build
+```
+
+The frontend and public API are served through `http://127.0.0.1:5173`. The Java API is intentionally not published as a separate host port.
+
+## Central API
 
 ```text
-POST   /api/repositories/scan
-POST   /api/reviews
-GET    /api/reviews?limit=20&offset=0
-GET    /api/reviews/{id}
-DELETE /api/reviews/{id}
+POST /api/auth/login
+POST /api/auth/logout
+GET  /api/auth/me
+POST /api/projects/register
+GET  /api/projects
+PUT  /api/projects/{id}/policy
+POST /api/client/projects/resolve
+POST /api/agent/reviews
+POST /api/management/bootstrap
+POST /api/management/users
+POST /api/management/users/{userId}/agents
+POST /api/management/projects/{projectId}/members
 ```
 
-`POST /api/reviews` 是持久化接口：前端先调用 `POST /api/ai/review` 获取 findings，再把评审元数据、补丁和 findings 提交到 Java。该接口不会再次调用 LLM。
+`POST /api/projects/register` accepts a `name` and `remoteUrl`. The server normalizes HTTPS, SCP-style SSH, and `ssh://` URLs to a repository key such as `git.example.com/acme/order-service`; it does not inspect a local filesystem.
 
-## 数据库
+`POST /api/client/projects/resolve` accepts `{"remoteUrl":"..."}` and an Agent Token. It returns the central project identity and effective review policy only for an administrator, owner, or reviewer. An unregistered remote returns a disabled response without a project identifier; a viewer or non-member receives `403`.
 
-服务使用 MySQL 8 和 Flyway。启动时会自动执行 `V1__create_review_history.sql`，创建：
+The supported developer-side integration is the Java 21 Local Client in `../local-client`. It binds only to `127.0.0.1`, holds the Agent Token in user-scoped DPAPI storage, resolves the Git remote before every review, and submits only remote-derived repository identity and relative Git changes. The PowerShell Git Hook is only a localhost adapter and does not authenticate with this API directly.
 
-- `projects`
-- `reviews`
-- `review_files`
-- `review_findings`
+`POST /api/agent/reviews` requires the submitted `repositoryKey` to match the selected central project before the LLM is invoked. The older `/api/projects/import` and `/api/repositories/*` endpoints are retained only for host-local development.
 
-Docker 默认连接：`127.0.0.1:3307/codeops`（容器内部端口仍为 `3306`），可通过 `MYSQL_PORT` 或 `SPRING_DATASOURCE_URL` 覆盖。
-
-## 启动
-
-推荐从项目根目录启动 MySQL、LLM、前端和本机 Java：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-local-stack.ps1
-```
-
-也可以单独运行 Java，但需要先启动 MySQL：
-
-```powershell
-mvn spring-boot:run
-```
-
-Java 直接运行在 Windows 宿主机，因此 Git 扫描支持本机任意现有仓库路径。
-
-## 测试
+## Tests
 
 ```powershell
 mvn test

@@ -5,6 +5,8 @@ describe('navigation', () => {
   it('maps supported hash routes and falls back to review', () => {
     expect(getRoute('#review')).toBe('review');
     expect(getRoute('#projects')).toBe('projects');
+    expect(getRoute('#rules')).toBe('rules');
+    expect(getRoute('#users')).toBe('users');
     expect(getRoute('#history')).toBe('history');
     expect(getRoute('#settings')).toBe('review');
     expect(getRoute('')).toBe('review');

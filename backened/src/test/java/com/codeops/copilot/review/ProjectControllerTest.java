@@ -46,6 +46,20 @@ class ProjectControllerTest {
     }
 
     @Test
+    void registersCentralProjectFromARemoteUrl() throws Exception {
+        when(projectService.registerRemoteProject("Order Service", "git@git.example.com:acme/order-service.git"))
+                .thenReturn(new ProjectService.CentralProjectView(3L, "Order Service",
+                        "git@git.example.com:acme/order-service.git", "git.example.com/acme/order-service",
+                        "GIT", view().policy()));
+
+        mockMvc.perform(post("/api/projects/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Order Service\",\"remoteUrl\":\"git@git.example.com:acme/order-service.git\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.repositoryKey").value("git.example.com/acme/order-service"));
+    }
+
+    @Test
     void updatesPolicy() throws Exception {
         when(projectService.updatePolicy(any(Long.class), any(ProjectService.PolicyCommand.class))).thenReturn(view());
 

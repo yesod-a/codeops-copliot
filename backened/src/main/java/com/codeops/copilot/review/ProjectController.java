@@ -36,9 +36,16 @@ public class ProjectController {
         return projectService.importProject(request.repositoryPath());
     }
 
+    @PostMapping("/register")
+    public ProjectService.CentralProjectView registerCentralProject(@Valid @RequestBody RegisterCentralProjectRequest request) {
+        return projectService.registerRemoteProject(request.name(), request.remoteUrl());
+    }
+
     @GetMapping
-    public List<ProjectService.ProjectView> list() {
-        return projectService.list();
+    public Object list(@RequestParam(required = false) Integer page,
+                       @RequestParam(required = false) Integer size) {
+        if (page == null && size == null) return projectService.list();
+        return projectService.list(page == null ? 0 : page, size == null ? 3 : size);
     }
 
     @GetMapping("/policy/resolve")
@@ -82,6 +89,9 @@ public class ProjectController {
     }
 
     public record ImportProjectRequest(@NotBlank String repositoryPath) {
+    }
+
+    public record RegisterCentralProjectRequest(@NotBlank String name, @NotBlank String remoteUrl) {
     }
 
     public record PolicyRequest(

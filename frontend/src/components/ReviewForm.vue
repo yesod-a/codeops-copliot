@@ -8,6 +8,7 @@ const props = defineProps({
   scanning: Boolean,
   scanError: { type: String, default: '' },
   scanResult: { type: Object, default: null },
+  centralMode: { type: Boolean, default: false },
   projects: { type: Array, default: () => [] },
   selectedProjectId: { type: [String, Number], default: '' }
 });
@@ -21,11 +22,15 @@ const demoForm = {
 };
 const form = reactive({ ...demoForm });
 const gitForm = reactive({ repositoryPath: '', scope: 'WORKTREE', baseRef: '', title: '评审本地变更' });
-const mode = ref('git');
+const mode = ref(props.centralMode ? 'manual' : 'git');
 const selectedPaths = ref([]);
 const validationMessage = ref('');
 
 const changedFiles = computed(() => props.scanResult?.files ?? []);
+const changedFilesPage = ref(1);
+const changedFilesPageSize = 10;
+const visibleChangedFiles = computed(() => changedFiles.value.slice((changedFilesPage.value - 1) * changedFilesPageSize, changedFilesPage.value * changedFilesPageSize));
+const changedFilesTotalPages = computed(() => Math.max(1, Math.ceil(changedFiles.value.length / changedFilesPageSize)));
 const selectableFiles = computed(() => getSelectableGitFiles(changedFiles.value));
 const selectedFile = computed(() => changedFiles.value.find((file) => selectedPaths.value.includes(file.path)) ?? null);
 const allSelectableSelected = computed(() => selectableFiles.value.length > 0
@@ -33,6 +38,7 @@ const allSelectableSelected = computed(() => selectableFiles.value.length > 0
 
 watch(() => props.scanResult, () => {
   selectedPaths.value = [];
+  changedFilesPage.value = 1;
   validationMessage.value = '';
 });
 
@@ -146,7 +152,7 @@ function loadDemo() {
     </div>
 
     <div class="mode-switch" role="group" aria-label="评审来源">
-      <button data-testid="mode-git" type="button" :class="{ selected: mode === 'git' }" @click="selectMode('git')">本地 Git</button>
+      <button v-if="!props.centralMode" data-testid="mode-git" type="button" :class="{ selected: mode === 'git' }" @click="selectMode('git')">本地 Git</button>
       <button data-testid="mode-manual" type="button" :class="{ selected: mode === 'manual' }" @click="selectMode('manual')">手动粘贴</button>
     </div>
 
@@ -194,7 +200,7 @@ function loadDemo() {
           <strong>已选择 {{ selectedPaths.length }} / {{ selectableFiles.length }} 个文件</strong>
           <button type="button" class="text-button" @click="toggleAllFiles">{{ allSelectableSelected ? '清空选择' : '全选文件' }}</button>
         </div>
-        <label v-for="file in changedFiles" :key="file.path" class="changed-file-row" :class="{ selected: selectedPaths.includes(file.path), unavailable: file.binary || file.supported === false }">
+        <label v-for="file in visibleChangedFiles" :key="file.path" class="changed-file-row" :class="{ selected: selectedPaths.includes(file.path), unavailable: file.binary || file.supported === false }">
           <input
             :data-testid="fileTestId(file.path)"
             type="checkbox"
@@ -209,6 +215,7 @@ function loadDemo() {
           <span class="git-status" :class="`git-status-${String(file.status).toLowerCase()}`">{{ getGitStatusLabel(file.status) }}</span>
           <span class="file-stats"><b>+{{ file.additions }}</b><i>-{{ file.deletions }}</i></span>
         </label>
+        <div v-if="changedFiles.length > changedFilesPageSize" class="pagination" aria-label="变更文件分页"><button type="button" :disabled="changedFilesPage <= 1" @click.stop="changedFilesPage--">上一页</button><span>第 {{ changedFilesPage }} / {{ changedFilesTotalPages }} 页</span><button type="button" :disabled="changedFilesPage >= changedFilesTotalPages" @click.stop="changedFilesPage++">下一页</button></div>
       </div>
 
       <div v-if="selectedFile" class="patch-preview">

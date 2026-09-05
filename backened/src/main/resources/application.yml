@@ -1,5 +1,10 @@
 server:
   port: 8080
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        same-site: lax
 
 spring:
   datasource:
@@ -13,3 +18,7 @@ spring:
     open-in-view: false
   flyway:
     enabled: ${SPRING_FLYWAY_ENABLED:true}
+
+codeops:
+  ai-url: ${CODEOPS_AI_URL:http://127.0.0.1:8090/api/ai/review}
+  bootstrap-token: ${CODEOPS_BOOTSTRAP_TOKEN:change-me-in-production}

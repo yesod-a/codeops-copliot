@@ -16,6 +16,13 @@ describe('ReviewForm', () => {
     expect(wrapper.emitted('project-change')[0][0]).toBe(7);
   });
 
+  it('does not offer browser local Git scanning in central deployment mode', () => {
+    const wrapper = mount(ReviewForm, { props: { centralMode: true } });
+
+    expect(wrapper.find('[data-testid="mode-git"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="mode-manual"]').exists()).toBe(true);
+  });
+
   it('keeps git submission disabled until one supported file is selected', async () => {
     const wrapper = mount(ReviewForm, {
       props: {

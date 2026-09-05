@@ -1,0 +1,13 @@
+D:\development\project\my_learn\local-client\src\test\java\com\codeops\client\central\HttpCentralApiClientTest.java
+D:\development\project\my_learn\local-client\src\test\java\com\codeops\client\cli\DoctorCommandTest.java
+D:\development\project\my_learn\local-client\src\test\java\com\codeops\client\cli\LoginCommandTest.java
+D:\development\project\my_learn\local-client\src\test\java\com\codeops\client\cli\StatusCommandTest.java
+D:\development\project\my_learn\local-client\src\test\java\com\codeops\client\CodeOpsClientApplicationTest.java
+D:\development\project\my_learn\local-client\src\test\java\com\codeops\client\config\JsonClientSettingsStoreTest.java
+D:\development\project\my_learn\local-client\src\test\java\com\codeops\client\credential\DpapiCredentialStoreTest.java
+D:\development\project\my_learn\local-client\src\test\java\com\codeops\client\git\ChangeCollectorTest.java
+D:\development\project\my_learn\local-client\src\test\java\com\codeops\client\git\RepositoryDiscoveryTest.java
+D:\development\project\my_learn\local-client\src\test\java\com\codeops\client\http\CodeOpsHttpServerTest.java
+D:\development\project\my_learn\local-client\src\test\java\com\codeops\client\install\WinSwInstallerTest.java
+D:\development\project\my_learn\local-client\src\test\java\com\codeops\client\integration\PrePushClientIntegrationTest.java
+D:\development\project\my_learn\local-client\src\test\java\com\codeops\client\review\ReviewWorkflowTest.java

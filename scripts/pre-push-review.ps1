@@ -1,5 +1,8 @@
 ﻿[CmdletBinding()]
 param(
+    [string]$ServerUrl = $(if ($env:CODEOPS_SERVER_URL) { $env:CODEOPS_SERVER_URL } else { '' }),
+    [string]$AgentToken = $(if ($env:CODEOPS_AGENT_TOKEN) { $env:CODEOPS_AGENT_TOKEN } else { '' }),
+    [long]$ProjectId = $(if ($env:CODEOPS_PROJECT_ID) { [long]$env:CODEOPS_PROJECT_ID } else { 0 }),
     [string]$AiUrl = $(if ($env:CODEOPS_AI_URL) { $env:CODEOPS_AI_URL } else { 'http://127.0.0.1:8090/api/ai/review' }),
     [string]$HistoryUrl = $(if ($env:CODEOPS_HISTORY_URL) { $env:CODEOPS_HISTORY_URL } else { 'http://127.0.0.1:8080/api/reviews' }),
     [ValidateSet('OFF', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL')]
@@ -234,6 +237,32 @@ function Invoke-PushReview {
     if ($reviewFiles.Count -eq 0) {
         Write-Host "[CodeOps] $($Update.LocalRef): 没有可评审的文本代码变更，允许推送。"
         return $false
+    }
+
+    if ($ServerUrl -and $AgentToken -and $ProjectId -gt 0) {
+        $endpoint = $ServerUrl.TrimEnd('/') + '/api/agent/reviews'
+        $branch = ($Update.LocalRef -replace '^refs/heads/', '')
+        $payload = @{
+            projectId = $ProjectId
+            repositoryKey = (Split-Path $RepositoryRoot -Leaf)
+            title = "pre-push 评审: $branch -> $($Update.RemoteRef)"
+            branch = $branch
+            headCommit = $Update.NewSha
+            baseRef = $baseSha
+            files = @($reviewFiles | ForEach-Object { @{ path = $_.Path; gitStatus = $_.GitStatus; additions = $_.Additions; deletions = $_.Deletions; patch = $_.Patch; contentHash = $null } })
+        } | ConvertTo-Json -Depth 10 -Compress
+        Write-Host "[CodeOps] 请求中央评审服务，包含 $($reviewFiles.Count) 个文件。"
+        $headers = @{ Authorization = "Bearer $AgentToken" }
+        $response = Invoke-WebRequest -UseBasicParsing -Uri $endpoint -Method Post -Headers $headers -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($payload)) -TimeoutSec $ReviewTimeoutSeconds
+        $central = ConvertFrom-CodeOpsJsonBytes -Bytes $response.RawContentStream.ToArray()
+        $findings = @($central.review.findings)
+        if ($central.blocked) {
+            Write-Host "[CodeOps] 中央评审阻止推送：$($central.blockReason)"
+            foreach ($finding in $findings) { Write-Host "  [$($finding.severity)] $($finding.file):$($finding.line) $($finding.message)" }
+        } else {
+            Write-Host '[CodeOps] 中央评审通过，允许推送。'
+        }
+        return [bool]$central.blocked
     }
 
     $branch = ($Update.LocalRef -replace '^refs/heads/', '')

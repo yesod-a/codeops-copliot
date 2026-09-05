@@ -8,6 +8,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import java.util.Locale;
 
 @Service
@@ -40,11 +42,67 @@ public class ProjectService {
         return toView(savedProject, policy);
     }
 
+    @Transactional
+    public ProjectView registerCentralProject(String name, String repositoryKey) {
+        String normalizedKey = repositoryKey.trim().replace('\\', '/');
+        ProjectEntity project = projectRepository.findByRepositoryPath(normalizedKey)
+                .orElseGet(() -> projectRepository.save(new ProjectEntity(name.trim(), normalizedKey, null, null)));
+        project.updateMetadata(name.trim(), project.getLastBranch(), project.getLastHeadCommit());
+        ProjectEntity savedProject = projectRepository.save(project);
+        ReviewPolicyEntity policy = policyFor(savedProject);
+        if (policy.getId() == null || policy.getProjectId() == null) {
+            policy = policyRepository.save(policy);
+        }
+        return toView(savedProject, policy);
+    }
+
+    @Transactional
+    public CentralProjectView registerRemoteProject(String name, String remoteUrl) {
+        RemoteRepositoryIdentity identity = RemoteRepositoryIdentity.parse(remoteUrl);
+        ProjectEntity project = projectRepository.findByRepositoryKey(identity.repositoryKey())
+                .orElseGet(() -> new ProjectEntity(name.trim(), null, null, null));
+        project.updateMetadata(name.trim(), project.getLastBranch(), project.getLastHeadCommit());
+        project.registerRemoteRepository(identity);
+        ProjectEntity savedProject = projectRepository.save(project);
+        ReviewPolicyEntity policy = policyFor(savedProject);
+        if (policy.getId() == null || policy.getProjectId() == null) {
+            policy = policyRepository.save(policy);
+        }
+        return toCentralView(savedProject, policy);
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.Optional<CentralProjectView> findCentralProject(String remoteUrl) {
+        RemoteRepositoryIdentity identity = RemoteRepositoryIdentity.parse(remoteUrl);
+        return projectRepository.findByRepositoryKey(identity.repositoryKey())
+                .map(project -> toCentralView(project, policyFor(project)));
+    }
+
+    @Transactional(readOnly = true)
+    public boolean repositoryMatches(long projectId, String repositoryKey) {
+        if (repositoryKey == null || repositoryKey.isBlank()) return false;
+        return projectRepository.findById(projectId)
+                .map(project -> project.getRepositoryKey() == null
+                        || project.getRepositoryKey().equals(repositoryKey.trim()))
+                .orElse(false);
+    }
+
     @Transactional(readOnly = true)
     public List<ProjectView> list() {
         return projectRepository.findAll().stream()
                 .map(project -> toView(project, policyFor(project)))
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public ProjectPage list(int page, int size) {
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, Math.min(size, 100));
+        var result = projectRepository.findAll(PageRequest.of(safePage, safeSize,
+                Sort.by(Sort.Direction.DESC, "updatedAt")));
+        return new ProjectPage(result.getContent().stream()
+                .map(project -> toView(project, policyFor(project))).toList(),
+                result.getNumber(), result.getSize(), result.getTotalElements(), result.getTotalPages());
     }
 
     @Transactional(readOnly = true)
@@ -91,6 +149,11 @@ public class ProjectService {
                 project.getLastBranch(), project.getLastHeadCommit(), policyView(policy));
     }
 
+    private CentralProjectView toCentralView(ProjectEntity project, ReviewPolicyEntity policy) {
+        return new CentralProjectView(project.getId(), project.getName(), project.getRemoteUrl(),
+                project.getRepositoryKey(), project.getProvider(), policyView(policy));
+    }
+
     private ResolvedPolicy resolved(ProjectEntity project, ReviewPolicyEntity policy) {
         return new ResolvedPolicy(project.getId(), project.getName(), project.getRepositoryPath(),
                 policy.isEnabled(), policy.isPreCommitEnabled(), policy.isPrePushEnabled(),
@@ -126,6 +189,13 @@ public class ProjectService {
 
     public record ProjectView(Long id, String name, String repositoryPath, String branch,
                               String headCommit, PolicyView policy) {
+    }
+
+    public record CentralProjectView(Long id, String name, String remoteUrl, String repositoryKey,
+                                     String provider, PolicyView policy) {
+    }
+
+    public record ProjectPage(List<ProjectView> items, int page, int pageSize, long total, int totalPages) {
     }
 
     public record ResolvedPolicy(Long projectId, String projectName, String repositoryPath, boolean enabled,

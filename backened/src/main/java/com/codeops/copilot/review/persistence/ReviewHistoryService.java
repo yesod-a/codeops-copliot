@@ -65,6 +65,34 @@ public class ReviewHistoryService {
         return toView(reviewRepository.saveAndFlush(review));
     }
 
+    @Transactional
+    public ReviewHistoryView saveForProject(long projectId, SaveReviewCommand command) {
+        String requestId = command.requestId().toString();
+        var existing = reviewRepository.findByRequestId(requestId);
+        if (existing.isPresent()) return toView(existing.get());
+        ProjectEntity project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new IllegalArgumentException("Project not found: " + projectId));
+        List<FileCommand> fileCommands = command.files() == null ? List.of() : command.files();
+        ReviewEntity review = new ReviewEntity(
+                UUID.randomUUID().toString(), requestId, project, command.title(),
+                defaultValue(command.sourceType(), "GIT"), command.scope(), command.baseRef(),
+                command.branch(), command.headCommit(), defaultValue(command.status(), "COMPLETED"),
+                command.modelName(), riskScore(command.findings()), command.errorMessage());
+        Map<String, ReviewFileEntity> filesByPath = fileCommands.stream()
+                .map(file -> new ReviewFileEntity(file.path(), file.gitStatus(), file.additions(), file.deletions(),
+                        file.patch(), file.contentHash()))
+                .peek(review::addFile)
+                .collect(Collectors.toMap(ReviewFileEntity::getPath, Function.identity(), (first, ignored) -> first));
+        List<FindingCommand> findingCommands = command.findings() == null ? List.of() : command.findings();
+        for (FindingCommand finding : findingCommands) {
+            review.addFinding(new ReviewFindingEntity(
+                    finding.category(), finding.severity(), finding.line(), finding.message(),
+                    finding.suggestion(), finding.evidence(), finding.confidence(), filesByPath.get(finding.file())));
+        }
+        review.setFindingCount(findingCommands.size());
+        return toView(reviewRepository.saveAndFlush(review));
+    }
+
     @Transactional(readOnly = true)
     public List<ReviewHistorySummary> list(int limit, int offset) {
         int safeLimit = Math.max(1, Math.min(limit, 100));
@@ -75,6 +103,16 @@ public class ReviewHistoryService {
                 .skip(safeOffset)
                 .map(this::toSummary)
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public ReviewPage listPage(int page, int size) {
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, Math.min(size, 100));
+        var result = reviewRepository.findAll(PageRequest.of(safePage, safeSize,
+                Sort.by(Sort.Direction.DESC, "createdAt")));
+        return new ReviewPage(result.getContent().stream().map(this::toSummary).toList(),
+                result.getNumber(), result.getSize(), result.getTotalElements(), result.getTotalPages());
     }
 
     @Transactional(readOnly = true)
@@ -210,6 +248,9 @@ public class ReviewHistoryService {
                                     String status, String modelName, int riskScore, int findingCount,
                                     String errorMessage, LocalDateTime createdAt, LocalDateTime completedAt,
                                     List<ReviewFileView> files, List<ReviewFinding> findings) {
+    }
+
+    public record ReviewPage(List<ReviewHistorySummary> items, int page, int pageSize, long total, int totalPages) {
     }
 
     public record ReviewFileView(String path, String gitStatus, int additions, int deletions,

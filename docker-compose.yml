@@ -43,6 +43,22 @@ services:
       retries: 5
       start_period: 15s
 
+  backend:
+    build:
+      context: ./backened
+      dockerfile: Dockerfile
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-codeops}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-codeops}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-codeops}
+      CODEOPS_AI_URL: http://llm-backend:8090/api/ai/review
+      CODEOPS_BOOTSTRAP_TOKEN: ${CODEOPS_BOOTSTRAP_TOKEN:?Set CODEOPS_BOOTSTRAP_TOKEN in .env before starting CodeOps.}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      llm-backend:
+        condition: service_healthy
+
   frontend:
     build:
       context: ./frontend
@@ -54,8 +70,8 @@ services:
         condition: service_healthy
       llm-backend:
         condition: service_healthy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      backend:
+        condition: service_started
 
 volumes:
   mysql-data:

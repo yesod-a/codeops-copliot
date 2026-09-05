@@ -61,6 +61,48 @@ class ProjectServiceTest {
     }
 
     @Test
+    void registersCentralProjectWithoutAccessingAClientFilesystem() {
+        ProjectJpaRepository projects = mock(ProjectJpaRepository.class);
+        ReviewPolicyRepository policies = mock(ReviewPolicyRepository.class);
+        GitRepositoryService git = mock(GitRepositoryService.class);
+        when(projects.findByRepositoryPath("acme/order-service")).thenReturn(java.util.Optional.empty());
+        when(projects.save(org.mockito.ArgumentMatchers.any(ProjectEntity.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(policies.save(org.mockito.ArgumentMatchers.any(ReviewPolicyEntity.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        ProjectService service = new ProjectService(projects, policies, git);
+
+        ProjectService.ProjectView view = service.registerCentralProject("Order Service", "acme/order-service");
+
+        assertThat(view.name()).isEqualTo("Order Service");
+        assertThat(view.repositoryPath()).isEqualTo("acme/order-service");
+        org.mockito.Mockito.verifyNoInteractions(git);
+    }
+
+    @Test
+    void registersCentralProjectFromItsRemoteUrlWithoutAccessingAClientFilesystem() {
+        ProjectJpaRepository projects = mock(ProjectJpaRepository.class);
+        ReviewPolicyRepository policies = mock(ReviewPolicyRepository.class);
+        GitRepositoryService git = mock(GitRepositoryService.class);
+        when(projects.findByRepositoryKey("git.example.com/acme/order-service"))
+                .thenReturn(java.util.Optional.empty());
+        when(projects.save(org.mockito.ArgumentMatchers.any(ProjectEntity.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(policies.save(org.mockito.ArgumentMatchers.any(ReviewPolicyEntity.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        ProjectService service = new ProjectService(projects, policies, git);
+
+        ProjectService.CentralProjectView view = service.registerRemoteProject(
+                "Order Service", "git@git.example.com:acme/order-service.git");
+
+        assertThat(view.repositoryKey()).isEqualTo("git.example.com/acme/order-service");
+        assertThat(view.remoteUrl()).isEqualTo("git@git.example.com:acme/order-service.git");
+        org.mockito.Mockito.verifyNoInteractions(git);
+    }
+
+    @Test
     void resolvesMissingProjectAsDisabled() {
         ProjectJpaRepository projects = mock(ProjectJpaRepository.class);
         ReviewPolicyRepository policies = mock(ReviewPolicyRepository.class);

@@ -6,6 +6,7 @@ async function request(path, options = {}) {
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${API_BASE}${path}`, {
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json', ...(fetchOptions.headers ?? {}) },
       signal: controller.signal,
       ...fetchOptions
@@ -21,6 +22,54 @@ async function request(path, options = {}) {
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+export function login(username, password) {
+  return request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+}
+
+export function logout() {
+  return request('/api/auth/logout', { method: 'POST' });
+}
+
+export function getCurrentUser() {
+  return request('/api/auth/me');
+}
+
+export function listManagedUsers() {
+  return request('/api/management/users');
+}
+
+export function createManagedUser(user) {
+  return request('/api/management/users', { method: 'POST', body: JSON.stringify(user) });
+}
+
+export function updateManagedUser(userId, user) {
+  return request(`/api/management/users/${encodeURIComponent(userId)}`, { method: 'PUT', body: JSON.stringify(user) });
+}
+
+export function createManagedAgent(userId, name) {
+  return request(`/api/management/users/${encodeURIComponent(userId)}/agents`, {
+    method: 'POST', body: JSON.stringify({ name })
+  });
+}
+
+export function setManagedAgentActive(userId, agentId, active) {
+  return request(`/api/management/users/${encodeURIComponent(userId)}/agents/${encodeURIComponent(agentId)}`, {
+    method: 'PATCH', body: JSON.stringify({ active })
+  });
+}
+
+export function updateManagedProjectMembership(projectId, userId, role) {
+  return request(`/api/management/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`, {
+    method: 'PUT', body: JSON.stringify({ role })
+  });
+}
+
+export function removeManagedProjectMembership(projectId, userId) {
+  return request(`/api/management/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`, {
+    method: 'DELETE'
+  });
 }
 
 export function scanRepository(payload) {
@@ -42,6 +91,13 @@ export function importProject(repositoryPath) {
   });
 }
 
+export function registerCentralProject(name, remoteUrl) {
+  return request('/api/projects/register', {
+    method: 'POST',
+    body: JSON.stringify({ name, remoteUrl })
+  });
+}
+
 export function updateProjectPolicy(id, policy) {
   return request(`/api/projects/${id}/policy`, {
     method: 'PUT',
@@ -51,6 +107,42 @@ export function updateProjectPolicy(id, policy) {
 
 export function deleteProject(id) {
   return request(`/api/projects/${id}`, { method: 'DELETE' });
+}
+
+export function listGlobalRules() {
+  return request('/api/rules/global');
+}
+
+export function createGlobalRule(rule) {
+  return request('/api/rules/global', { method: 'POST', body: JSON.stringify(rule) });
+}
+
+export function updateGlobalRule(id, rule) {
+  return request(`/api/rules/global/${id}`, { method: 'PUT', body: JSON.stringify(rule) });
+}
+
+export function deleteGlobalRule(id) {
+  return request(`/api/rules/global/${id}`, { method: 'DELETE' });
+}
+
+export function listProjectRules(projectId) {
+  return request(`/api/projects/${projectId}/rules`);
+}
+
+export function createProjectRule(projectId, rule) {
+  return request(`/api/projects/${projectId}/rules`, { method: 'POST', body: JSON.stringify(rule) });
+}
+
+export function updateProjectRule(projectId, ruleId, rule) {
+  return request(`/api/projects/${projectId}/rules/${ruleId}`, { method: 'PUT', body: JSON.stringify(rule) });
+}
+
+export function deleteProjectRule(projectId, ruleId) {
+  return request(`/api/projects/${projectId}/rules/${ruleId}`, { method: 'DELETE' });
+}
+
+export function previewProjectRules(projectId, paths) {
+  return request(`/api/projects/${projectId}/rules/preview`, { method: 'POST', body: JSON.stringify({ paths }) });
 }
 
 export function submitAiReview(payload) {

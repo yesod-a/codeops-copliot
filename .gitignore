@@ -5,6 +5,8 @@ backened/target/
 *.iml
 *.log
 .env
+.codeops/
+**/.codeops/client.json
 llm-backend/.env
 llm-backend/.venv/
 llm-backend/__pycache__/

@@ -8,6 +8,9 @@ import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactor
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Bean;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.net.http.HttpClient;
 
 @Configuration
 public class ReviewConfiguration {
@@ -24,6 +27,11 @@ public class ReviewConfiguration {
     @Bean
     GitRepositoryService gitRepositoryService(GitCommandRunner commandRunner, GitDiffParser diffParser) {
         return new GitRepositoryService(commandRunner, diffParser);
+    }
+
+    @Bean
+    HttpClient centralHttpClient() {
+        return HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(10)).build();
     }
 
     @Bean

@@ -24,6 +24,15 @@ public class ProjectEntity {
     @Column(name = "repository_path", length = 768, unique = true)
     private String repositoryPath;
 
+    @Column(name = "remote_url", length = 768)
+    private String remoteUrl;
+
+    @Column(name = "repository_key", length = 768, unique = true)
+    private String repositoryKey;
+
+    @Column(length = 32)
+    private String provider;
+
     @Column(name = "last_branch", length = 255)
     private String lastBranch;
 
@@ -68,6 +77,24 @@ public class ProjectEntity {
 
     public String getRepositoryPath() {
         return repositoryPath;
+    }
+
+    public String getRemoteUrl() {
+        return remoteUrl;
+    }
+
+    public String getRepositoryKey() {
+        return repositoryKey;
+    }
+
+    public String getProvider() {
+        return provider;
+    }
+
+    public void registerRemoteRepository(RemoteRepositoryIdentity identity) {
+        this.remoteUrl = identity.remoteUrl();
+        this.repositoryKey = identity.repositoryKey();
+        this.provider = identity.provider();
     }
 
     public void updateMetadata(String name, String branch, String headCommit) {
