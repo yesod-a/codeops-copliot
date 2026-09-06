@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { deleteProject, getAiHealth, getCurrentUser, getReviewDetails, importProject, listProjects, listReviews, login, logout, readSelectedGitFiles, registerCentralProject, saveReview, scanRepository, submitAiReview, updateProjectPolicy } from './api/reviewApi.js';
+import { cancelReviewTask, deleteProject, getAiHealth, getCurrentUser, getReviewDetails, importProject, listProjects, listReviewTasks, listReviews, login, logout, readSelectedGitFiles, registerCentralProject, retryReviewTask, saveReview, scanRepository, submitAiReview, updateProjectPolicy } from './api/reviewApi.js';
 import FindingList from './components/FindingList.vue';
 import ReviewForm from './components/ReviewForm.vue';
 import ReviewStatus from './components/ReviewStatus.vue';
@@ -22,6 +22,11 @@ const route = ref(getRoute(window.location.hash));
 const reviewHistory = ref([]);
 const historyLoading = ref(false);
 const historyError = ref('');
+const reviewTasks = ref([]);
+const tasksLoading = ref(false);
+const tasksError = ref('');
+const taskPage = ref(0);
+const taskTotalPages = ref(1);
 const historyDetailLoading = ref(false);
 const historyDetailId = ref(null);
 const aiHealth = ref(null);
@@ -129,6 +134,20 @@ async function loadReviewHistory() {
   }
 }
 
+async function loadReviewTasks() {
+  tasksLoading.value = true;
+  tasksError.value = '';
+  try {
+    const result = await listReviewTasks({ page: taskPage.value, size: 10 });
+    reviewTasks.value = result.items ?? [];
+    taskTotalPages.value = Math.max(1, result.totalPages ?? 1);
+  } catch (error) { tasksError.value = error.message || '无法加载评审任务。'; }
+  finally { tasksLoading.value = false; }
+}
+
+async function cancelTask(taskId) { await cancelReviewTask(taskId); await loadReviewTasks(); }
+async function retryTask(taskId) { await retryReviewTask(taskId); await loadReviewTasks(); }
+
 function syncRoute() {
   const nextRoute = getRoute(window.location.hash);
   if (nextRoute === 'users' && currentUser.value?.role !== 'ADMIN') {
@@ -138,6 +157,7 @@ function syncRoute() {
   }
   route.value = nextRoute;
   if (route.value === 'history') loadReviewHistory();
+  if (route.value === 'tasks') loadReviewTasks();
   if (route.value === 'history-detail') {
     const id = getHistoryId(window.location.hash);
     if (id && id !== historyDetailId.value) loadHistoryDetail(id);
@@ -347,6 +367,7 @@ async function initializeAuth() {
     checkAiHealth();
     loadProjects();
     loadReviewHistory();
+    loadReviewTasks();
     if (route.value === 'history-detail') {
       const id = getHistoryId(window.location.hash);
       if (id) loadHistoryDetail(id);
@@ -368,6 +389,7 @@ async function handleLogin() {
     checkAiHealth();
     loadProjects();
     loadReviewHistory();
+    loadReviewTasks();
   } catch (error) {
     loginError.value = error.message || '登录失败，请检查用户名和密码。';
   } finally {
@@ -406,6 +428,7 @@ async function handleLogout() {
         <a class="nav-item" :class="{ active: route === 'review' }" href="#review"><span class="nav-icon">◈</span>评审工作台</a>
         <a class="nav-item" :class="{ active: route === 'projects' }" href="#projects"><span class="nav-icon">▦</span>项目</a>
         <a class="nav-item" :class="{ active: route === 'history' || route === 'history-detail' }" href="#history"><span class="nav-icon">◷</span>历史记录</a>
+        <a class="nav-item" :class="{ active: route === 'tasks' }" href="#tasks"><span class="nav-icon">◌</span>评审任务</a>
         <a class="nav-item" :class="{ active: route === 'rules' }" href="#rules"><span class="nav-icon">☷</span>评审规则</a>
         <a v-if="currentUser?.role === 'ADMIN'" class="nav-item" :class="{ active: route === 'users' }" href="#users"><span class="nav-icon">♙</span>用户管理</a>
         <p class="nav-label nav-label-spaced">系统</p>
@@ -422,7 +445,7 @@ async function handleLogout() {
 
     <main class="main-content" id="review">
       <header class="topbar">
-        <div class="breadcrumb"><span>工作区</span><b>/</b><strong>{{ route === 'review' ? '评审工作台' : route === 'projects' ? '项目' : route === 'rules' ? '评审规则' : route === 'users' ? '用户管理' : route === 'history-detail' ? '评审详情' : '历史记录' }}</strong></div>
+        <div class="breadcrumb"><span>工作区</span><b>/</b><strong>{{ route === 'review' ? '评审工作台' : route === 'projects' ? '项目' : route === 'rules' ? '评审规则' : route === 'users' ? '用户管理' : route === 'tasks' ? '评审任务' : route === 'history-detail' ? '评审详情' : '历史记录' }}</strong></div>
           <div class="topbar-actions"><span class="connection-pill"><span class="pulse-dot"></span>{{ connectionMessage }}</span><button class="icon-button" title="帮助">?</button><span class="avatar small">{{ currentUser?.displayName?.slice(0, 2) || 'U' }}</span></div>
       </header>
 
@@ -531,6 +554,15 @@ async function handleLogout() {
         </section>
         <div v-if="reviewHistory.length" class="pagination" aria-label="历史记录分页"><button type="button" :disabled="historyPage <= 1" @click="historyPage--">上一页</button><span>第 {{ historyPage }} / {{ historyTotalPages }} 页</span><button type="button" :disabled="historyPage >= historyTotalPages" @click="historyPage++">下一页</button></div>
         <div v-else class="empty-state history-empty"><span class="empty-icon">◷</span><strong>暂无评审记录</strong><span>提交一次本地 Git 或手动评审后，记录会显示在这里。</span><button class="primary-button" type="button" @click="goTo('review')">创建第一条评审</button></div>
+      </div>
+
+      <div v-else-if="route === 'tasks'" class="content-wrap">
+        <section class="page-intro"><div><p class="eyebrow">异步执行</p><h1>评审任务</h1><p class="intro-copy">查看 Git Hook 和工作台提交的评审进度、失败原因及重试状态。</p></div><button class="secondary-button" type="button" @click="loadReviewTasks">刷新</button></section>
+        <p v-if="tasksError" class="notice-banner"><span>!</span>{{ tasksError }}</p>
+        <p v-else-if="tasksLoading" class="scan-message">正在加载评审任务...</p>
+        <section v-else-if="reviewTasks.length" class="history-list"><article v-for="item in reviewTasks" :key="item.taskId" class="history-item"><div class="history-item-main"><span class="repo-mark">TASK</span><div><strong>{{ item.title }}</strong><span>进度 {{ item.completedGroups }} / {{ item.totalGroups }} 组{{ item.errorMessage ? ` · ${item.errorMessage}` : '' }}</span></div></div><div class="history-item-meta"><span class="status-badge"><span class="status-dot"></span>{{ item.status }}</span><button v-if="!['COMPLETED','FAILED','CANCELLED'].includes(item.status)" class="ghost-button" type="button" @click="cancelTask(item.taskId)">取消</button><button v-if="['FAILED','CANCELLED'].includes(item.status)" class="ghost-button" type="button" @click="retryTask(item.taskId)">重试</button></div></article></section>
+        <div v-else class="empty-state history-empty"><strong>暂无异步评审任务</strong></div>
+        <div class="pagination"><button type="button" :disabled="taskPage <= 0" @click="taskPage--; loadReviewTasks()">上一页</button><span>第 {{ taskPage + 1 }} / {{ taskTotalPages }} 页</span><button type="button" :disabled="taskPage + 1 >= taskTotalPages" @click="taskPage++; loadReviewTasks()">下一页</button></div>
       </div>
 
       <div v-else class="content-wrap history-detail-page">

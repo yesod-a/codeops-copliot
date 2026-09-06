@@ -72,6 +72,21 @@ describe('local Git review API', () => {
     vi.useRealTimers();
   });
 
+  it('waits 600 seconds for a manual LLM review response', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ findings: [] }), { status: 200 }));
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout');
+
+    await submitAiReview({
+      repositoryPath: 'C:/repo',
+      title: 'Slow LLM review',
+      files: [{ path: 'src/App.java', content: 'class App {}' }]
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 600000);
+  });
+
   it('persists, lists, loads, and deletes database-backed review history', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'review-1' }), { status: 200 }))

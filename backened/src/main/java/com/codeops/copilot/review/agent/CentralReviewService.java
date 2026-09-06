@@ -31,7 +31,19 @@ public class CentralReviewService {
     @Autowired
     public CentralReviewService(@Value("${codeops.ai-url:http://127.0.0.1:8090/api/ai/review}") String aiUrl,
                                 ObjectMapper objectMapper) {
-        this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build(), aiUrl, objectMapper);
+        this(createHttpClient(), aiUrl, objectMapper);
+    }
+
+    static HttpClient createHttpClient() {
+        HttpClient.Builder builder = HttpClient.newBuilder();
+        configureHttpClient(builder);
+        return builder.build();
+    }
+
+    static void configureHttpClient(HttpClient.Builder builder) {
+        builder
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(Duration.ofSeconds(10));
     }
 
     public String aiUrl() { return aiUrl; }
@@ -43,12 +55,15 @@ public class CentralReviewService {
                     "title", request.title(),
                     "files", request.files().stream().map(file -> Map.of("path", file.path(), "content", file.patch() == null ? "" : file.patch())).toList());
             HttpRequest httpRequest = HttpRequest.newBuilder(URI.create(aiUrl))
-                    .timeout(Duration.ofSeconds(120))
+                    .timeout(Duration.ofSeconds(600))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
                     .build();
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() / 100 != 2) throw new IllegalStateException("LLM service returned HTTP " + response.statusCode());
+            if (response.statusCode() / 100 != 2) {
+                throw new IllegalStateException("LLM service returned HTTP " + response.statusCode()
+                        + ": " + summarizeError(response.body()));
+            }
             JsonNode findings = objectMapper.readTree(response.body()).path("findings");
             List<AgentReviewController.AgentFindingRequest> normalized = java.util.stream.StreamSupport.stream(findings.spliterator(), false)
                     .map(node -> new AgentReviewController.AgentFindingRequest(
@@ -68,10 +83,16 @@ public class CentralReviewService {
         }
     }
 
-    private boolean isBlocked(List<AgentReviewController.AgentFindingRequest> findings, String threshold) {
+    public static boolean isBlocked(List<AgentReviewController.AgentFindingRequest> findings, String threshold) {
         if (threshold == null || "OFF".equalsIgnoreCase(threshold)) return false;
         Severity minimum = Severity.valueOf(threshold.toUpperCase());
         return findings.stream().anyMatch(finding -> finding.severity().ordinal() >= minimum.ordinal());
+    }
+
+    private String summarizeError(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) return "empty response";
+        String summary = responseBody.replaceAll("\\s+", " ").trim();
+        return summary.substring(0, Math.min(summary.length(), 1_000));
     }
 
     public record ReviewOutcome(List<AgentReviewController.AgentFindingRequest> findings,

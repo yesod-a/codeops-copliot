@@ -148,13 +148,29 @@ export function previewProjectRules(projectId, paths) {
 export function submitAiReview(payload) {
   return request('/api/ai/review', {
     method: 'POST',
-    timeoutMs: 120000,
+    timeoutMs: 600000,
     body: JSON.stringify({
       repository: payload.repositoryPath ?? payload.repository,
       title: payload.title,
       files: payload.files.map(({ path, content }) => ({ path, content: content ?? '' }))
     })
   });
+}
+
+export function listReviewTasks({ page = 0, size = 10 } = {}) {
+  return request(`/api/review-tasks?page=${page}&size=${size}`, { timeoutMs: 10000 });
+}
+
+export function getReviewTask(taskId) {
+  return request(`/api/review-tasks/${encodeURIComponent(taskId)}`, { timeoutMs: 10000 });
+}
+
+export function cancelReviewTask(taskId) {
+  return request(`/api/review-tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST', timeoutMs: 10000 });
+}
+
+export function retryReviewTask(taskId) {
+  return request(`/api/review-tasks/${encodeURIComponent(taskId)}/retry`, { method: 'POST', timeoutMs: 10000 });
 }
 
 export function saveReview(payload) {

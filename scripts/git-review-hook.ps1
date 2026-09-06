@@ -59,15 +59,16 @@ function Invoke-CodeOpsHookReview {
     $payload = New-CodeOpsReviewPayload -ProjectId ([long]$resolution.projectId) -RepositoryKey ([string]$resolution.repositoryKey) `
         -Trigger $Trigger -Branch $branch -HeadCommit $headCommit -BaseRef $baseRef -Files $reviewFiles
     Write-Host "[CodeOps] 正在评审 $($reviewFiles.Count) 个变更文件。"
-    $result = Invoke-CodeOpsJsonPost -Uri ($Settings.serverUrl.TrimEnd('/') + '/api/agent/reviews') `
-        -Body $payload -Token $Token -TimeoutSeconds ([int]$Settings.timeoutSeconds)
-    foreach ($finding in @($result.review.findings)) {
-        $location = if ($finding.file) { "$($finding.file):$($finding.line)" } else { '' }
-        Write-Host "  [$($finding.severity)] $location $($finding.message)".TrimEnd()
+    try {
+        $result = Invoke-CodeOpsJsonPost -Uri ($Settings.serverUrl.TrimEnd('/') + '/api/agent/review-tasks') `
+            -Body $payload -Token $Token -TimeoutSeconds ([int]$Settings.timeoutSeconds)
+        Write-Host "[CodeOps] 已创建异步评审任务：$($result.taskId)"
+        Write-Host '[CodeOps] 推送已放行，可在 CodeOps 任务中心查看结果。'
+    } catch {
+        Write-Host "[CodeOps] 异步评审任务创建失败：$($_.Exception.Message)"
+        Write-Host '[CodeOps] 异步模式下不阻断 Git 操作，请稍后检查服务状态。'
     }
-    if ([bool]$result.blocked) { Write-Host "[CodeOps] 评审阻止 Git 操作：$($result.blockReason)" }
-    else { Write-Host '[CodeOps] 评审通过，允许 Git 操作。' }
-    return [bool]$result.blocked
+    return $false
 }
 
 if (-not $NoExecute) {

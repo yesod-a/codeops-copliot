@@ -1,4 +1,18 @@
 services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-codeops}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-codeops}
+    ports:
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
   mysql:
     image: mysql:8.4
     environment:
@@ -29,7 +43,7 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
       AI_MODEL: ${AI_MODEL:-gpt-4o-mini}
       AI_TEMPERATURE: ${AI_TEMPERATURE:-0.1}
-      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-60}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-600}
     ports:
       - "${LLM_PORT:-8090}:8090"
     healthcheck:
@@ -53,10 +67,37 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-codeops}
       CODEOPS_AI_URL: http://llm-backend:8090/api/ai/review
       CODEOPS_BOOTSTRAP_TOKEN: ${CODEOPS_BOOTSTRAP_TOKEN:?Set CODEOPS_BOOTSTRAP_TOKEN in .env before starting CodeOps.}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_DEFAULT_USER:-codeops}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS:-codeops}
     depends_on:
       mysql:
         condition: service_healthy
       llm-backend:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  review-worker:
+    build:
+      context: ./backened
+      dockerfile: Dockerfile
+    command: ["java", "-jar", "/app/app.jar", "--spring.profiles.active=worker", "--spring.main.web-application-type=none"]
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-codeops}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-codeops}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-codeops}
+      CODEOPS_AI_URL: http://llm-backend:8090/api/ai/review
+      CODEOPS_BOOTSTRAP_TOKEN: ${CODEOPS_BOOTSTRAP_TOKEN:?Set CODEOPS_BOOTSTRAP_TOKEN in .env before starting CodeOps.}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_DEFAULT_USER:-codeops}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS:-codeops}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      llm-backend:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
 
   frontend:
@@ -71,6 +112,8 @@ services:
       llm-backend:
         condition: service_healthy
       backend:
+        condition: service_started
+      review-worker:
         condition: service_started
 
 volumes:

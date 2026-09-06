@@ -7,6 +7,12 @@ server:
         same-site: lax
 
 spring:
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:127.0.0.1}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:codeops}
+    password: ${SPRING_RABBITMQ_PASSWORD:codeops}
+    publisher-confirm-type: correlated
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:mysql://127.0.0.1:3307/codeops?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai}
     username: ${SPRING_DATASOURCE_USERNAME:codeops}
@@ -22,3 +28,7 @@ spring:
 codeops:
   ai-url: ${CODEOPS_AI_URL:http://127.0.0.1:8090/api/ai/review}
   bootstrap-token: ${CODEOPS_BOOTSTRAP_TOKEN:change-me-in-production}
+  review-queue:
+    exchange: ${CODEOPS_REVIEW_QUEUE_EXCHANGE:codeops.review}
+    execute-queue: ${CODEOPS_REVIEW_QUEUE_EXECUTE:codeops.review.execute}
+    routing-key: ${CODEOPS_REVIEW_QUEUE_ROUTING_KEY:review.execute}

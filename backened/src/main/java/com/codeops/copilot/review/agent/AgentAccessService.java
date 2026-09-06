@@ -121,6 +121,11 @@ public class AgentAccessService {
         return userRepository.findById(userId).filter(UserEntity::isActive);
     }
 
+    @Transactional(readOnly = true)
+    public List<Long> projectIdsFor(String userId) {
+        return memberRepository.findProjectIdsByUserId(userId);
+    }
+
     @Transactional
     public AgentToken createAgent(String userId, String name) {
         UserEntity user = userRepository.findById(userId).orElseThrow(() -> new IllegalArgumentException("User not found"));

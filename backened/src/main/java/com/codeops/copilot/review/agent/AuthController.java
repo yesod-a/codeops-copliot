@@ -11,7 +11,7 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
-    static final String SESSION_USER_ID = "codeops.userId";
+    public static final String SESSION_USER_ID = "codeops.userId";
     private final AgentAccessService accessService;
 
     public AuthController(AgentAccessService accessService) { this.accessService = accessService; }

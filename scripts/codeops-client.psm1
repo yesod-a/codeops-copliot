@@ -11,6 +11,10 @@ function Get-CodeOpsSettingsPath { return (Join-Path (Get-CodeOpsClientDirectory
 function Get-CodeOpsCredentialsPath { return (Join-Path (Get-CodeOpsClientDirectory) 'credentials.dat') }
 function Get-CodeOpsHookStatePath { return (Join-Path (Get-CodeOpsClientDirectory) 'hook-state.json') }
 
+function Initialize-CodeOpsDpapi {
+    Add-Type -AssemblyName System.Security -ErrorAction Stop
+}
+
 function Set-CodeOpsUtf8Output {
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [Console]::OutputEncoding = $encoding
@@ -42,18 +46,35 @@ function Save-CodeOpsAgentToken {
     if ([string]::IsNullOrWhiteSpace($Token)) { throw 'AgentToken 不能为空。' }
     $directory = Get-CodeOpsClientDirectory
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
-    $secure = ConvertTo-SecureString -String $Token.Trim() -AsPlainText -Force
-    $encrypted = ConvertFrom-SecureString -SecureString $secure
-    [IO.File]::WriteAllText((Get-CodeOpsCredentialsPath), $encrypted, (New-Object Text.UTF8Encoding($false)))
+    Initialize-CodeOpsDpapi
+    $plaintext = [Text.Encoding]::UTF8.GetBytes($Token.Trim())
+    $encrypted = [System.Security.Cryptography.ProtectedData]::Protect(
+        $plaintext,
+        $null,
+        [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+    $serialized = 'dpapi:v1:' + [Convert]::ToBase64String($encrypted)
+    [IO.File]::WriteAllText((Get-CodeOpsCredentialsPath), $serialized, (New-Object Text.UTF8Encoding($false)))
 }
 
 function Get-CodeOpsAgentToken {
     $path = Get-CodeOpsCredentialsPath
     if (-not (Test-Path -LiteralPath $path)) { throw 'CodeOps Agent Token 不存在，请重新运行初始化脚本。' }
-    $secure = ConvertTo-SecureString -String (Get-Content -Raw -LiteralPath $path).Trim()
-    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
-    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+    $serialized = (Get-Content -Raw -LiteralPath $path).Trim()
+    $prefix = 'dpapi:v1:'
+    if (-not $serialized.StartsWith($prefix, [StringComparison]::Ordinal)) {
+        throw 'CodeOps Agent Token 使用旧版加密格式，请使用新的 Agent Token 重新运行 initialize-codeops-client.ps1 -Force。'
+    }
+    try {
+        Initialize-CodeOpsDpapi
+        $encrypted = [Convert]::FromBase64String($serialized.Substring($prefix.Length))
+        $plaintext = [System.Security.Cryptography.ProtectedData]::Unprotect(
+            $encrypted,
+            $null,
+            [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+        return [Text.Encoding]::UTF8.GetString($plaintext)
+    } catch {
+        throw "无法读取 CodeOps Agent Token：$($_.Exception.Message)"
+    }
 }
 
 function Invoke-CodeOpsGit {

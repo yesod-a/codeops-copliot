@@ -9,26 +9,42 @@ Describe 'Script-only CodeOps Git hook' {
         $source | Should Not Match '\.codeops\\client\.json'
         $source | Should Not Match 'repositoryPath\s*='
         $source | Should Match '/api/client/projects/resolve'
-        $source | Should Match '/api/agent/reviews'
+        $source | Should Match '/api/agent/review-tasks'
+        $source | Should Match '推送已放行'
         $source | Should Match 'Get-CodeOpsRemoteUrl'
     }
 
     It 'stores client state outside repositories and encrypts the token' {
         $oldLocalAppData = $env:LOCALAPPDATA
         try {
-            $env:LOCALAPPDATA = $TestDrive
+            $clientState = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            $env:LOCALAPPDATA = $clientState
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'initialize-codeops-client.ps1') `
                 -ServerUrl 'http://localhost:5173' -AgentToken 'cop_test_secret' -SkipHookInstall | Out-Null
-            $clientDir = Join-Path $TestDrive 'CodeOps'
+            $clientDir = Join-Path $clientState 'CodeOps'
             $settingsPath = Join-Path $clientDir 'settings.json'
             $credentialsPath = Join-Path $clientDir 'credentials.dat'
             Test-Path $settingsPath | Should Be $true
             Test-Path $credentialsPath | Should Be $true
-            Test-Path (Join-Path $TestDrive '.codeops\client.json') | Should Be $false
+            Test-Path (Join-Path $clientState '.codeops\client.json') | Should Be $false
             $settings = Get-Content -Raw $settingsPath | ConvertFrom-Json
             $settings.serverUrl | Should Be 'http://localhost:5173'
             ($settings.PSObject.Properties.Name -contains 'agentToken') | Should Be $false
             (Get-Content -Raw $credentialsPath) | Should Not Be 'cop_test_secret'
+        } finally { $env:LOCALAPPDATA = $oldLocalAppData }
+    }
+
+    It 'round-trips the DPAPI token without relying on security cmdlet autoloading' {
+        $source = Get-Content -Raw $modulePath
+        $source | Should Not Match 'Convert(To|From)-SecureString'
+
+        $oldLocalAppData = $env:LOCALAPPDATA
+        try {
+            $env:LOCALAPPDATA = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'initialize-codeops-client.ps1') `
+                -ServerUrl 'http://localhost:5173' -AgentToken 'cop_test_secret' -SkipHookInstall | Out-Null
+            $token = & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Import-Module '$modulePath' -Force; Get-CodeOpsAgentToken"
+            $token | Should Be 'cop_test_secret'
         } finally { $env:LOCALAPPDATA = $oldLocalAppData }
     }
 

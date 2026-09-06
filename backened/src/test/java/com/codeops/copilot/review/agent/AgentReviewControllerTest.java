@@ -1,6 +1,7 @@
 package com.codeops.copilot.review.agent;
 
 import com.codeops.copilot.review.persistence.ReviewHistoryService;
+import com.codeops.copilot.review.tasks.ReviewTaskService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -35,6 +36,9 @@ class AgentReviewControllerTest {
 
     @MockBean
     private com.codeops.copilot.review.persistence.ProjectService projectService;
+
+    @MockBean
+    private ReviewTaskService taskService;
 
     @Test
     void rejectsAgentReviewWithoutBearerToken() throws Exception {

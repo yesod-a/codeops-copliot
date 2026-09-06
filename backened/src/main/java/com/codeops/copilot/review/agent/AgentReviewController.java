@@ -3,6 +3,8 @@ package com.codeops.copilot.review.agent;
 import com.codeops.copilot.review.Severity;
 import com.codeops.copilot.review.persistence.ReviewHistoryService;
 import com.codeops.copilot.review.persistence.ProjectService;
+import com.codeops.copilot.review.tasks.ReviewTaskEntity;
+import com.codeops.copilot.review.tasks.ReviewTaskService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -28,13 +30,43 @@ public class AgentReviewController {
     private final ReviewHistoryService historyService;
     private final CentralReviewService centralReviewService;
     private final ProjectService projectService;
+    private final ReviewTaskService taskService;
 
     public AgentReviewController(AgentAccessService accessService, ReviewHistoryService historyService,
-                                 CentralReviewService centralReviewService, ProjectService projectService) {
+                                 CentralReviewService centralReviewService, ProjectService projectService,
+                                 ReviewTaskService taskService) {
         this.accessService = accessService;
         this.historyService = historyService;
         this.centralReviewService = centralReviewService;
         this.projectService = projectService;
+        this.taskService = taskService;
+    }
+
+    @PostMapping("/review-tasks")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public ReviewTaskResponse createTask(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                         @Valid @RequestBody AgentReviewRequest request) {
+        AgentAccessService.Principal principal = accessService.authenticate(bearerToken(authorization));
+        if (principal == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid agent token");
+        validateRequest(principal, request);
+        ReviewTaskEntity task = taskService.create(new ReviewTaskService.CreateTaskCommand(
+                request.projectId(), principal.userId(), request.repositoryKey(), request.title(),
+                request.trigger(), request.branch(), request.headCommit(), request.baseRef(),
+                request.files().stream().map(AgentFileRequest::toCommand).toList()));
+        return ReviewTaskResponse.from(task);
+    }
+
+    private void validateRequest(AgentAccessService.Principal principal, AgentReviewRequest request) {
+        if (!accessService.canReview(principal.userId(), request.projectId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "The user cannot review this project");
+        }
+        if (!projectService.repositoryMatches(request.projectId(), request.repositoryKey())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Repository does not match this project");
+        }
+        ProjectService.ProjectView project = projectService.get(request.projectId());
+        if (!project.policy().enabled() || !triggerEnabled(project.policy(), request.trigger())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Review trigger is disabled for this project");
+        }
     }
 
     @PostMapping("/reviews")
@@ -90,7 +122,7 @@ public class AgentReviewController {
             findings = findings == null ? List.of() : List.copyOf(findings);
         }
 
-        ReviewHistoryService.SaveReviewCommand toCommand(List<AgentFindingRequest> reviewedFindings) {
+        public ReviewHistoryService.SaveReviewCommand toCommand(List<AgentFindingRequest> reviewedFindings) {
             return new ReviewHistoryService.SaveReviewCommand(
                     UUID.randomUUID(), null, repositoryKey, title, "GIT", "BASE_COMMIT", baseRef,
                     branch, headCommit, "central-agent", files.stream().map(AgentFileRequest::toCommand).toList(),
@@ -101,7 +133,7 @@ public class AgentReviewController {
     public record AgentFileRequest(@NotBlank String path, String gitStatus,
                                    @PositiveOrZero int additions, @PositiveOrZero int deletions,
                                    String patch, String contentHash) {
-        ReviewHistoryService.FileCommand toCommand() {
+        public ReviewHistoryService.FileCommand toCommand() {
             return new ReviewHistoryService.FileCommand(path, gitStatus, additions, deletions, patch, contentHash);
         }
     }
@@ -109,7 +141,7 @@ public class AgentReviewController {
     public record AgentFindingRequest(@NotBlank String file, @NotBlank String category, @NotNull Severity severity,
                                       @Positive int line, @NotBlank String message, @NotBlank String suggestion,
                                       String evidence, double confidence) {
-        ReviewHistoryService.FindingCommand toCommand() {
+        public ReviewHistoryService.FindingCommand toCommand() {
             return new ReviewHistoryService.FindingCommand(file, category, severity, line, message, suggestion,
                     evidence == null ? "" : evidence, confidence);
         }
@@ -117,5 +149,11 @@ public class AgentReviewController {
 
     public record AgentReviewResponse(ReviewHistoryService.ReviewHistoryView review,
                                       boolean blocked, String blockReason) {
+    }
+
+    public record ReviewTaskResponse(String taskId, String status, int totalGroups, int completedGroups) {
+        static ReviewTaskResponse from(ReviewTaskEntity task) {
+            return new ReviewTaskResponse(task.getId(), task.getStatus().name(), task.getTotalGroups(), task.getCompletedGroups());
+        }
     }
 }
