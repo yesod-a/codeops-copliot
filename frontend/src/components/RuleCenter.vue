@@ -163,7 +163,7 @@ onMounted(loadGlobal);
 
     <template v-if="activeTab === 'global' || activeTab === 'project'">
       <div v-if="activeTab === 'project'" class="rule-project-picker">
-        <label class="field"><span>项目</span><select v-model="selectedProjectId" data-test="rule-project-select"><option value="">选择已导入项目</option><option v-for="project in projects" :key="project.id" :value="String(project.id)">{{ project.name }}</option></select></label>
+        <label class="field"><span>项目</span><select v-model="selectedProjectId" class="app-select" data-test="rule-project-select"><option value="">选择已导入项目</option><option v-for="project in projects" :key="project.id" :value="String(project.id)">{{ project.name }}</option></select></label>
         <p v-if="selectedProject" class="rule-inherit-hint">项目规则会叠加全局规则，不会覆盖已命中的全局规则。</p>
       </div>
 
@@ -184,7 +184,7 @@ onMounted(loadGlobal);
         <div class="rule-editor-heading"><strong>{{ editingRule ? '编辑规则' : '创建规则' }}</strong><button v-if="editingRule" class="text-button" type="button" @click="cancelEdit">取消</button></div>
         <div class="rule-form-grid">
           <label class="field"><span>名称</span><input v-model.trim="form.name" maxlength="120" required placeholder="例如：事务完整性" /></label>
-          <label class="field"><span>分类</span><select v-model="form.category"><option v-for="category in categories" :key="category" :value="category">{{ category }}</option></select></label>
+          <label class="field"><span>分类</span><select v-model="form.category" class="app-select"><option v-for="category in categories" :key="category" :value="category">{{ category }}</option></select></label>
           <label class="field"><span>适用路径 Glob</span><input v-model.trim="form.pathPattern" maxlength="255" required placeholder="**/*.java" /></label>
           <label class="field"><span>优先级</span><input v-model.number="form.priority" type="number" min="-100000" max="100000" required /></label>
           <label class="field field-wide"><span>规则正文</span><textarea v-model.trim="form.content" required rows="4" placeholder="给评审 Agent 的具体检查要求"></textarea></label>
@@ -207,7 +207,7 @@ onMounted(loadGlobal);
       <section class="panel preview-panel">
         <div class="panel-heading"><div><p class="eyebrow">按文件解析</p><h2>规则预览</h2></div></div>
         <div class="rule-preview-form">
-          <label class="field"><span>项目</span><select v-model="selectedProjectId" data-test="rule-project-select"><option value="">选择已导入项目</option><option v-for="project in projects" :key="project.id" :value="String(project.id)">{{ project.name }}</option></select></label>
+          <label class="field"><span>项目</span><select v-model="selectedProjectId" class="app-select" data-test="rule-project-select"><option value="">选择已导入项目</option><option v-for="project in projects" :key="project.id" :value="String(project.id)">{{ project.name }}</option></select></label>
           <label class="field"><span>仓库相对路径</span><textarea v-model="previewPaths" data-test="preview-paths" rows="4" placeholder="backend/src/OrderService.java&#10;frontend/src/App.vue"></textarea></label>
           <button class="primary-button" data-test="preview-rules" type="button" :disabled="loading" @click="runPreview">{{ loading ? '解析中...' : '预览有效规则' }}</button>
         </div>

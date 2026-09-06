@@ -61,4 +61,23 @@ describe('RuleCenter', () => {
     expect(wrapper.get('[data-test="inherited-global-rules"]').text()).toContain('事务完整性');
     expect(wrapper.get('[data-test="inherited-global-rules"]').text()).not.toContain('停用规则');
   });
+
+  it('uses the shared select control for rule category and project choices', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (url === '/api/rules/global') return new Response(JSON.stringify([]), { status: 200 });
+      if (url === '/api/projects/3/rules') return new Response(JSON.stringify([]), { status: 200 });
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const wrapper = mount(RuleCenter, { props: { projects: [{ id: 3, name: 'store' }] } });
+    await flushPromises();
+    expect(wrapper.get('select').classes('app-select')).toBe(true);
+
+    await wrapper.get('.rule-tabs button:nth-child(2)').trigger('click');
+    expect(wrapper.findAll('select')).toHaveLength(2);
+    expect(wrapper.findAll('select').every((select) => select.classes('app-select'))).toBe(true);
+
+    await wrapper.get('.rule-tabs button:nth-child(3)').trigger('click');
+    expect(wrapper.get('[data-test="rule-project-select"]').classes('app-select')).toBe(true);
+  });
 });

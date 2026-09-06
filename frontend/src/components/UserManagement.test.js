@@ -41,4 +41,19 @@ describe('UserManagement', () => {
     expect(document.body.querySelector('[data-test="issued-token"]')?.textContent).toContain('cop_one_time_token');
     expect(document.body.textContent).toContain('Token 只显示一次');
   });
+
+  it('uses the shared select control for creation, editing, and project access', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify([{
+      id: 'user-1', username: 'alice', displayName: 'Alice', role: 'USER', active: true,
+      createdAt: '2026-09-05T10:00:00', agents: [], memberships: []
+    }]), { status: 200 }));
+
+    const wrapper = mount(UserManagement, {
+      props: { projects: [{ id: 3, name: 'store' }] }
+    });
+    await flushPromises();
+
+    expect(wrapper.findAll('select')).toHaveLength(4);
+    expect(wrapper.findAll('select').every((select) => select.classes('app-select'))).toBe(true);
+  });
 });

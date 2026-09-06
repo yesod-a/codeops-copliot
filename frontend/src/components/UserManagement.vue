@@ -135,7 +135,7 @@ onMounted(loadUsers);
         <label class="field"><span>用户名</span><input v-model.trim="userForm.username" maxlength="120" autocomplete="off" required /></label>
         <label class="field"><span>显示名</span><input v-model.trim="userForm.displayName" maxlength="160" required /></label>
         <label class="field"><span>初始密码</span><input v-model="userForm.password" type="password" minlength="8" maxlength="256" required /></label>
-        <label class="field"><span>全局角色</span><select v-model="userForm.role"><option value="USER">普通用户</option><option value="ADMIN">管理员</option></select></label>
+        <label class="field"><span>全局角色</span><select v-model="userForm.role" class="app-select"><option value="USER">普通用户</option><option value="ADMIN">管理员</option></select></label>
         <button class="primary-button" type="submit" :disabled="saving">{{ saving ? '保存中...' : '创建用户' }}</button>
       </form>
     </section>
@@ -147,7 +147,7 @@ onMounted(loadUsers);
 
         <div class="user-edit-grid">
           <label class="field"><span>显示名</span><input v-model.trim="user.displayName" maxlength="160" required /></label>
-          <label class="field"><span>全局角色</span><select v-model="user.role"><option value="USER">普通用户</option><option value="ADMIN">管理员</option></select></label>
+          <label class="field"><span>全局角色</span><select v-model="user.role" class="app-select"><option value="USER">普通用户</option><option value="ADMIN">管理员</option></select></label>
           <label class="checkbox-field"><input v-model="user.active" type="checkbox" />启用用户</label>
           <button class="secondary-button" type="button" :disabled="saving" @click="saveUser(user)">保存用户</button>
         </div>
@@ -159,7 +159,7 @@ onMounted(loadUsers);
 
         <div class="user-section"><div class="section-label"><strong>项目授权</strong></div>
           <ul v-if="user.memberships.length" class="metadata-list"><li v-for="membership in user.memberships" :key="membership.projectId"><span><strong>{{ membership.projectName }}</strong><small>{{ membership.role }}</small></span><button class="text-button" type="button" :disabled="saving" @click="removeMembership(user, membership)">移除</button></li></ul>
-          <div class="membership-form"><select v-model="memberProjectId"><option value="">选择项目</option><option v-for="project in props.projects" :key="project.id" :value="String(project.id)">{{ project.name }}</option></select><select v-model="memberRole"><option value="OWNER">OWNER</option><option value="REVIEWER">REVIEWER</option><option value="VIEWER">VIEWER</option></select><button class="secondary-button" type="button" :disabled="saving || !memberProjectId" @click="addMembership(user)">授权</button></div>
+          <div class="membership-form"><select v-model="memberProjectId" class="app-select"><option value="">选择项目</option><option v-for="project in props.projects" :key="project.id" :value="String(project.id)">{{ project.name }}</option></select><select v-model="memberRole" class="app-select"><option value="OWNER">OWNER</option><option value="REVIEWER">REVIEWER</option><option value="VIEWER">VIEWER</option></select><button class="secondary-button" type="button" :disabled="saving || !memberProjectId" @click="addMembership(user)">授权</button></div>
         </div>
       </article>
       <p v-if="!users.length" class="empty-rule-state">尚未创建用户。</p>
@@ -187,7 +187,7 @@ onMounted(loadUsers);
 .user-row-header h2 { margin: 0; font-size: 18px; }.user-row-header p { margin: 4px 0 0; color: var(--muted, #637083); }
 .role-badge, .state-badge { display: inline-flex; padding: 3px 7px; border: 1px solid #b8c4d2; border-radius: 4px; font-size: 12px; }.state-badge.disabled { color: #a23c32; border-color: #dfaaa5; }
 .user-section { border-top: 1px solid #dce3e8; padding-top: 14px; }.metadata-list { display: grid; gap: 8px; margin: 10px 0; padding: 0; list-style: none; }.metadata-list small { display: block; margin-top: 3px; color: #637083; }.empty-inline { margin: 10px 0; color: #637083; }
-.membership-form { justify-content: flex-start; }.membership-form select { min-height: 34px; border: 1px solid #b8c4d2; background: #fff; padding: 0 8px; }
+.membership-form { justify-content: flex-start; }.membership-form .app-select { width: min(220px, 100%); }
 .user-dialog-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgba(25, 35, 45, .38); }.user-dialog { width: min(480px, 100%); display: grid; gap: 16px; background: #fff; border: 1px solid #cdd6df; border-radius: 6px; box-shadow: 0 18px 45px rgba(25, 35, 45, .24); }.issued-token { display: block; overflow-wrap: anywhere; padding: 12px; background: #edf3f7; border: 1px solid #cdd6df; }
 @media (max-width: 800px) { .user-form-grid, .user-edit-grid { grid-template-columns: 1fr; }.membership-form { flex-wrap: wrap; } }
 </style>
