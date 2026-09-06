@@ -9,6 +9,9 @@ REVIEW_PROMPT = ChatPromptTemplate.from_messages([
 你必须只返回一个 JSON 对象，格式为 {{\"findings\": [...]}}，不要使用 Markdown 代码块，不要添加解释文字。
 每个 finding 必须包含 category、severity、file、line、message、suggestion、evidence、confidence。
 severity 只能是 CRITICAL、HIGH、MEDIUM、LOW，confidence 必须是 0 到 1 之间的数字。
+line、start_line、end_line 必须使用目标文件（+++ 右侧）的真实行号，并且必须落在提供的代码变更中。
+evidence 必须逐字复制自对应文件的代码行，只能包含代码文本（不要写解释、Markdown 标记、diff 前缀或行号）。
+如果无法从输入中确认具体代码行，就不要生成该 finding；绝不能编造 evidence。
 没有问题时返回 {{\"findings\": []}}。所有自然语言字段使用中文，file 必须使用输入中的相对路径。""",
     ),
     (

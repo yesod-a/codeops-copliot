@@ -52,6 +52,14 @@ public class ReviewTaskService {
     }
 
     @Transactional(readOnly = true)
+    public ReviewTaskEntity getWithDetails(String taskId) {
+        ReviewTaskEntity task = taskRepository.findWithDetailsById(taskId)
+                .orElseThrow(() -> new IllegalArgumentException("Review task not found"));
+        task.getGroups().forEach(group -> group.getFiles().size());
+        return task;
+    }
+
+    @Transactional(readOnly = true)
     public org.springframework.data.domain.Page<ReviewTaskEntity> pageForProjects(List<Long> projectIds, int page, int size) {
         PageRequest request = PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 100)),
                 Sort.by(Sort.Direction.DESC, "createdAt"));

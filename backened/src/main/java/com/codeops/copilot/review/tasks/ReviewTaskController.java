@@ -8,6 +8,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import com.codeops.copilot.review.agent.AgentReviewController;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.List;
 
@@ -16,9 +19,10 @@ import java.util.List;
 public class ReviewTaskController {
     private final ReviewTaskService taskService;
     private final AgentAccessService accessService;
+    private final ObjectMapper objectMapper;
 
-    public ReviewTaskController(ReviewTaskService taskService, AgentAccessService accessService) {
-        this.taskService = taskService; this.accessService = accessService;
+    public ReviewTaskController(ReviewTaskService taskService, AgentAccessService accessService, ObjectMapper objectMapper) {
+        this.taskService = taskService; this.accessService = accessService; this.objectMapper = objectMapper;
     }
 
     @GetMapping
@@ -36,9 +40,9 @@ public class ReviewTaskController {
     public TaskView get(@PathVariable String taskId, @RequestHeader(value = "Authorization", required = false) String authorization,
                         HttpSession session) {
         AgentAccessService.Principal principal = principal(authorization, session);
-        ReviewTaskEntity task = taskService.get(taskId);
+        ReviewTaskEntity task = taskService.getWithDetails(taskId);
         authorize(principal, task);
-        return TaskView.from(task);
+        return TaskView.from(task, objectMapper);
     }
 
     @PostMapping("/{taskId}/cancel")
@@ -80,7 +84,32 @@ public class ReviewTaskController {
     public record TaskView(String taskId, long projectId, String title, String status, String outcome,
                            int totalGroups, int completedGroups, Integer currentGroup, int retryCount,
                            boolean cancelRequested, String errorCode, String errorMessage, String reviewId,
-                           java.time.LocalDateTime createdAt, java.time.LocalDateTime startedAt, java.time.LocalDateTime completedAt) {
-        static TaskView from(ReviewTaskEntity task) { return new TaskView(task.getId(), task.getProjectId(), task.getTitle(), task.getStatus().name(), task.getOutcome() == null ? null : task.getOutcome().name(), task.getTotalGroups(), task.getCompletedGroups(), task.getCurrentGroup(), task.getRetryCount(), task.isCancelRequested(), task.getErrorCode(), task.getErrorMessage(), task.getReviewId(), task.getCreatedAt(), task.getStartedAt(), task.getCompletedAt()); }
+                           java.time.LocalDateTime createdAt, java.time.LocalDateTime startedAt, java.time.LocalDateTime completedAt,
+                           List<TaskGroupView> groups) {
+        static TaskView from(ReviewTaskEntity task) { return from(task, null); }
+        static TaskView from(ReviewTaskEntity task, ObjectMapper objectMapper) {
+            List<TaskGroupView> groups = objectMapper == null ? List.of() : task.getGroups().stream().map(group -> TaskGroupView.from(group, objectMapper)).toList();
+            return new TaskView(task.getId(), task.getProjectId(), task.getTitle(), task.getStatus().name(), task.getOutcome() == null ? null : task.getOutcome().name(), task.getTotalGroups(), task.getCompletedGroups(), task.getCurrentGroup(), task.getRetryCount(), task.isCancelRequested(), task.getErrorCode(), task.getErrorMessage(), task.getReviewId(), task.getCreatedAt(), task.getStartedAt(), task.getCompletedAt(), groups);
+        }
+    }
+
+    public record TaskGroupView(int groupNumber, String status, int attemptCount, String errorCode,
+                                String errorMessage, java.time.LocalDateTime startedAt,
+                                java.time.LocalDateTime completedAt, List<TaskFileView> files,
+                                List<AgentReviewController.AgentFindingRequest> findings) {
+        static TaskGroupView from(ReviewTaskGroupEntity group, ObjectMapper objectMapper) {
+            List<AgentReviewController.AgentFindingRequest> findings = List.of();
+            if (objectMapper != null && group.getFindingsJson() != null) {
+                try { findings = objectMapper.readValue(group.getFindingsJson(), new TypeReference<List<AgentReviewController.AgentFindingRequest>>() {}); }
+                catch (Exception ignored) { }
+            }
+            return new TaskGroupView(group.getGroupNumber(), group.getStatus().name(), group.getAttemptCount(),
+                    group.getErrorCode(), group.getErrorMessage(), group.getStartedAt(), group.getCompletedAt(),
+                    group.getFiles().stream().map(TaskFileView::from).toList(), findings);
+        }
+    }
+
+    public record TaskFileView(String path, String gitStatus, int additions, int deletions) {
+        static TaskFileView from(ReviewTaskFileEntity file) { return new TaskFileView(file.getPath(), file.getGitStatus(), file.getAdditions(), file.getDeletions()); }
     }
 }

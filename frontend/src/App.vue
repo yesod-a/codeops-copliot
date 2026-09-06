@@ -1,13 +1,13 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { cancelReviewTask, deleteProject, getAiHealth, getCurrentUser, getReviewDetails, importProject, listProjects, listReviewTasks, listReviews, login, logout, readSelectedGitFiles, registerCentralProject, retryReviewTask, saveReview, scanRepository, submitAiReview, updateProjectPolicy } from './api/reviewApi.js';
+import { cancelReviewTask, deleteProject, getAiHealth, getCurrentUser, getReviewDetails, getReviewTask, importProject, listProjects, listReviewTasks, listReviews, login, logout, readSelectedGitFiles, registerCentralProject, retryReviewTask, saveReview, scanRepository, submitAiReview, updateProjectPolicy } from './api/reviewApi.js';
 import FindingList from './components/FindingList.vue';
 import ReviewForm from './components/ReviewForm.vue';
 import ReviewStatus from './components/ReviewStatus.vue';
 import RuleCenter from './components/RuleCenter.vue';
 import UserManagement from './components/UserManagement.vue';
 import { calculateRiskScore, demoTask, getFindingCounts, getFindingText, getStatusMeta } from './reviewState.js';
-import { getHistoryId, getRoute } from './navigation.js';
+import { getHistoryId, getRoute, getTaskId } from './navigation.js';
 
 const task = ref(structuredClone(demoTask));
 const activeFilter = ref('ALL');
@@ -25,6 +25,10 @@ const historyError = ref('');
 const reviewTasks = ref([]);
 const tasksLoading = ref(false);
 const tasksError = ref('');
+const taskDetail = ref(null);
+const taskDetailLoading = ref(false);
+const taskDetailError = ref('');
+const taskDetailId = ref(null);
 const taskPage = ref(0);
 const taskTotalPages = ref(1);
 const historyDetailLoading = ref(false);
@@ -148,6 +152,32 @@ async function loadReviewTasks() {
 async function cancelTask(taskId) { await cancelReviewTask(taskId); await loadReviewTasks(); }
 async function retryTask(taskId) { await retryReviewTask(taskId); await loadReviewTasks(); }
 
+function openTask(taskId) {
+  window.location.hash = `tasks/${encodeURIComponent(taskId)}`;
+}
+
+function scheduleTaskDetailPoll(id) {
+  window.clearTimeout(pollingTimer);
+  if (!taskDetail.value || !isTaskActive(taskDetail.value.status)) return;
+  pollingTimer = window.setTimeout(() => {
+    if (getRoute(window.location.hash) === 'task-detail' && getTaskId(window.location.hash) === id) loadTaskDetail(id);
+  }, 2500);
+}
+
+async function loadTaskDetail(id) {
+  taskDetailId.value = id;
+  taskDetailLoading.value = true;
+  taskDetailError.value = '';
+  try {
+    taskDetail.value = await getReviewTask(id);
+    scheduleTaskDetailPoll(id);
+  } catch (error) {
+    taskDetailError.value = error.message || '无法加载评审任务详情。';
+  } finally {
+    taskDetailLoading.value = false;
+  }
+}
+
 function syncRoute() {
   const nextRoute = getRoute(window.location.hash);
   if (nextRoute === 'users' && currentUser.value?.role !== 'ADMIN') {
@@ -156,8 +186,13 @@ function syncRoute() {
     return;
   }
   route.value = nextRoute;
+  if (route.value !== 'task-detail') window.clearTimeout(pollingTimer);
   if (route.value === 'history') loadReviewHistory();
   if (route.value === 'tasks') loadReviewTasks();
+  if (route.value === 'task-detail') {
+    const id = getTaskId(window.location.hash);
+    if (id && id !== taskDetailId.value) loadTaskDetail(id);
+  }
   if (route.value === 'history-detail') {
     const id = getHistoryId(window.location.hash);
     if (id && id !== historyDetailId.value) loadHistoryDetail(id);
@@ -179,6 +214,23 @@ const counts = computed(() => getFindingCounts(task.value.findings));
 const score = computed(() => calculateRiskScore(task.value.findings));
 const scoreLabel = computed(() => score.value >= 80 ? '状态良好' : score.value >= 60 ? '需要关注' : '高风险');
 const statusMeta = computed(() => getStatusMeta(task.value.status));
+const taskDetailFindings = computed(() => (taskDetail.value?.groups ?? []).flatMap((group) => group.findings ?? []));
+
+function isTaskActive(status) {
+  return ['QUEUED', 'RUNNING', 'RETRY_WAIT', 'CANCEL_REQUESTED'].includes(status);
+}
+
+function taskStatusLabel(status) {
+  return ({ QUEUED: '排队中', RUNNING: '执行中', RETRY_WAIT: '等待重试', CANCEL_REQUESTED: '取消中', CANCELLED: '已取消', COMPLETED: '已完成', FAILED: '失败' })[status] ?? status;
+}
+
+function taskGroupStatusLabel(status) {
+  return ({ QUEUED: '排队中', RUNNING: '执行中', RETRY_WAIT: '等待重试', CANCELLED: '已取消', COMPLETED: '已完成', FAILED: '失败' })[status] ?? status;
+}
+
+function taskStatusTone(status) {
+  return ({ COMPLETED: 'success', FAILED: 'danger', CANCELLED: 'neutral', RUNNING: 'info', QUEUED: 'neutral', RETRY_WAIT: 'danger', CANCEL_REQUESTED: 'danger' })[status] ?? 'neutral';
+}
 
 function loadDemo() {
   task.value = structuredClone(demoTask);
@@ -372,6 +424,10 @@ async function initializeAuth() {
       const id = getHistoryId(window.location.hash);
       if (id) loadHistoryDetail(id);
     }
+    if (route.value === 'task-detail') {
+      const id = getTaskId(window.location.hash);
+      if (id) loadTaskDetail(id);
+    }
   } catch {
     currentUser.value = null;
   } finally {
@@ -560,9 +616,27 @@ async function handleLogout() {
         <section class="page-intro"><div><p class="eyebrow">异步执行</p><h1>评审任务</h1><p class="intro-copy">查看 Git Hook 和工作台提交的评审进度、失败原因及重试状态。</p></div><button class="secondary-button" type="button" @click="loadReviewTasks">刷新</button></section>
         <p v-if="tasksError" class="notice-banner"><span>!</span>{{ tasksError }}</p>
         <p v-else-if="tasksLoading" class="scan-message">正在加载评审任务...</p>
-        <section v-else-if="reviewTasks.length" class="history-list"><article v-for="item in reviewTasks" :key="item.taskId" class="history-item"><div class="history-item-main"><span class="repo-mark">TASK</span><div><strong>{{ item.title }}</strong><span>进度 {{ item.completedGroups }} / {{ item.totalGroups }} 组{{ item.errorMessage ? ` · ${item.errorMessage}` : '' }}</span></div></div><div class="history-item-meta"><span class="status-badge"><span class="status-dot"></span>{{ item.status }}</span><button v-if="!['COMPLETED','FAILED','CANCELLED'].includes(item.status)" class="ghost-button" type="button" @click="cancelTask(item.taskId)">取消</button><button v-if="['FAILED','CANCELLED'].includes(item.status)" class="ghost-button" type="button" @click="retryTask(item.taskId)">重试</button></div></article></section>
+        <section v-else-if="reviewTasks.length" class="history-list"><article v-for="item in reviewTasks" :key="item.taskId" class="history-item task-list-item" tabindex="0" @click="openTask(item.taskId)" @keydown.enter="openTask(item.taskId)"><div class="history-item-main"><span class="repo-mark">TASK</span><div><strong>{{ item.title }}</strong><span>进度 {{ item.completedGroups }} / {{ item.totalGroups }} 组{{ item.errorMessage ? ` · ${item.errorMessage}` : '' }}</span></div></div><div class="history-item-meta"><span class="status-badge" :class="`tone-${taskStatusTone(item.status)}`"><span class="status-dot"></span>{{ taskStatusLabel(item.status) }}</span><button v-if="!['COMPLETED','FAILED','CANCELLED'].includes(item.status)" class="ghost-button" type="button" @click.stop="cancelTask(item.taskId)">取消</button><button v-if="['FAILED','CANCELLED'].includes(item.status)" class="ghost-button" type="button" @click.stop="retryTask(item.taskId)">重试</button></div></article></section>
         <div v-else class="empty-state history-empty"><strong>暂无异步评审任务</strong></div>
         <div class="pagination"><button type="button" :disabled="taskPage <= 0" @click="taskPage--; loadReviewTasks()">上一页</button><span>第 {{ taskPage + 1 }} / {{ taskTotalPages }} 页</span><button type="button" :disabled="taskPage + 1 >= taskTotalPages" @click="taskPage++; loadReviewTasks()">下一页</button></div>
+      </div>
+
+      <div v-else-if="route === 'task-detail'" class="content-wrap task-detail-page">
+        <section class="page-intro">
+          <div><p class="eyebrow">异步执行详情</p><h1>{{ taskDetail?.title || '评审任务详情' }}</h1><p class="intro-copy">查看分组执行状态、变更文件和已完成的评审问题。</p></div>
+          <div class="page-intro-actions"><button class="secondary-button" type="button" @click="goTo('tasks')">返回任务列表</button><button v-if="taskDetail?.reviewId" class="primary-button" type="button" @click="openHistory(taskDetail.reviewId)">查看最终记录</button></div>
+        </section>
+        <p v-if="taskDetailError" class="notice-banner"><span>!</span>{{ taskDetailError }}</p>
+        <p v-else-if="taskDetailLoading && !taskDetail" class="scan-message">正在加载任务详情...</p>
+        <template v-else-if="taskDetail">
+          <section class="detail-summary panel task-detail-summary">
+            <div class="detail-summary-heading"><div><span class="eyebrow">任务 {{ taskDetail.taskId.slice(0, 8) }}</span><h2>{{ taskDetail.repositoryKey }}</h2></div><span class="status-badge" :class="`tone-${taskStatusTone(taskDetail.status)}`"><span class="status-dot"></span>{{ taskStatusLabel(taskDetail.status) }}</span></div>
+            <div class="detail-meta-grid"><div><span>整体进度</span><strong>{{ taskDetail.completedGroups }} / {{ taskDetail.totalGroups }} 组</strong></div><div><span>当前分组</span><strong>{{ taskDetail.currentGroup ? `第 ${taskDetail.currentGroup} 组` : '-' }}</strong></div><div><span>重试次数</span><strong>{{ taskDetail.retryCount }}</strong></div><div><span>分支</span><strong>{{ taskDetail.branch || '-' }}</strong></div><div><span>提交</span><strong class="mono-value">{{ taskDetail.headCommit?.slice(0, 12) || '-' }}</strong></div><div><span>更新时间</span><strong>{{ taskDetail.completedAt || taskDetail.startedAt || taskDetail.createdAt ? new Date(taskDetail.completedAt || taskDetail.startedAt || taskDetail.createdAt).toLocaleString('zh-CN') : '-' }}</strong></div></div>
+            <div v-if="taskDetail.errorMessage" class="task-error">{{ taskDetail.errorMessage }}</div>
+          </section>
+          <section class="task-groups"><div class="section-heading"><div><p class="eyebrow">执行拆分</p><h2>评审分组</h2></div><span class="muted-copy">{{ taskDetailFindings.length }} 个已发现问题</span></div><article v-for="group in taskDetail.groups" :key="group.groupNumber" class="task-group panel"><div class="task-group-heading"><div><strong>第 {{ group.groupNumber }} 组</strong><span>{{ group.files.length }} 个文件 · 尝试 {{ group.attemptCount }} 次</span></div><span class="status-badge" :class="`tone-${taskStatusTone(group.status)}`"><span class="status-dot"></span>{{ taskGroupStatusLabel(group.status) }}</span></div><div class="task-group-files"><code v-for="file in group.files" :key="file.path">{{ file.path }}</code></div><p v-if="group.errorMessage" class="task-error">{{ group.errorMessage }}</p><div v-if="group.findings.length && taskDetail.status !== 'COMPLETED'" class="task-group-findings"><strong>本组问题 {{ group.findings.length }} 个</strong><FindingList v-model="activeFilter" :findings="group.findings" /></div><p v-else-if="!group.findings.length && group.status === 'COMPLETED'" class="task-no-findings">本组未发现问题。</p></article></section>
+          <FindingList v-if="taskDetailFindings.length" v-model="activeFilter" :findings="taskDetailFindings" />
+        </template>
       </div>
 
       <div v-else class="content-wrap history-detail-page">

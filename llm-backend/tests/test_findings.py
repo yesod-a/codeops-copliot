@@ -75,3 +75,64 @@ def test_normalize_findings_rejects_invalid_line_ranges():
     }], [ReviewFile(path="src/App.java", content="class App {}")])
 
     assert result == []
+
+
+def test_normalize_findings_rebuilds_evidence_from_unified_diff():
+    patch = """diff --git a/src/App.java b/src/App.java
+--- a/src/App.java
++++ b/src/App.java
+@@ -1,3 +1,4 @@
+ class App {
++    return user.getName();
+ }
+"""
+
+    result = normalize_findings([{
+        "category": "BUG",
+        "severity": "HIGH",
+        "file": "src/App.java",
+        "line": 2,
+        "message": "可能为空指针",
+        "suggestion": "增加判空",
+        "evidence": "模型生成的解释，不是代码",
+        "confidence": 0.9,
+    }], [ReviewFile(path="src/App.java", content=patch)])
+
+    assert len(result) == 1
+    assert result[0].evidence == "    return user.getName();"
+
+
+def test_normalize_findings_does_not_keep_evidence_not_present_in_source():
+    result = normalize_findings([{
+        "category": "BUG",
+        "severity": "HIGH",
+        "file": "src/App.java",
+        "line": 2,
+        "message": "问题",
+        "suggestion": "修复",
+        "evidence": "这是一段模型解释",
+        "confidence": 0.9,
+    }], [ReviewFile(path="src/App.java", content="class App {}\n")])
+
+    assert len(result) == 1
+    assert result[0].evidence == ""
+
+
+def test_normalize_findings_replaces_oversized_model_evidence_before_validation():
+    patch = """@@ -10,1 +10,1 @@
+-old value
++actual = value;
+"""
+    result = normalize_findings([{
+        "category": "BUG",
+        "severity": "HIGH",
+        "file": "src/App.java",
+        "line": 10,
+        "message": "问题",
+        "suggestion": "修复",
+        "evidence": "x" * 10_000,
+        "confidence": 0.9,
+    }], [ReviewFile(path="src/App.java", content=patch)])
+
+    assert len(result) == 1
+    assert result[0].evidence == "actual = value;"
