@@ -42,6 +42,16 @@ public class ReviewTaskGroupEntity {
     public void retry(String code, String message) { status = ReviewTaskGroupStatus.RETRY_WAIT; errorCode = code; errorMessage = message; }
     public void fail(String code, String message) { status = ReviewTaskGroupStatus.FAILED; errorCode = code; errorMessage = message; completedAt = LocalDateTime.now(); }
     public void queue() { status = ReviewTaskGroupStatus.QUEUED; }
+    /** Manual task retry begins a fresh retry budget but retains completed groups. */
+    public void resetForManualRetry() {
+        if (status == ReviewTaskGroupStatus.COMPLETED) return;
+        status = ReviewTaskGroupStatus.QUEUED;
+        attemptCount = 0;
+        errorCode = null;
+        errorMessage = null;
+        startedAt = null;
+        completedAt = null;
+    }
     public void cancel() { status = ReviewTaskGroupStatus.CANCELLED; completedAt = LocalDateTime.now(); }
     public Long getId() { return id; } public int getGroupNumber() { return groupNumber; } public ReviewTaskGroupStatus getStatus() { return status; }
     public int getAttemptCount() { return attemptCount; } public String getFindingsJson() { return findingsJson; } public String getErrorCode() { return errorCode; }

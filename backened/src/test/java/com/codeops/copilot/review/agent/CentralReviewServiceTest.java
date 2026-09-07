@@ -60,6 +60,28 @@ class CentralReviewServiceTest {
     }
 
     @Test
+    void usesTheControlledProviderErrorCodeForServerFailures() throws Exception {
+        HttpClient client = mock(HttpClient.class);
+        @SuppressWarnings("unchecked")
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(503);
+        when(response.body()).thenReturn("{\"detail\":\"provider unavailable\"}");
+        when(response.headers()).thenReturn(java.net.http.HttpHeaders.of(
+                java.util.Map.of("X-CodeOps-Error-Code", java.util.List.of("PROVIDER_5XX")),
+                (name, value) -> true));
+        when(client.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
+        CentralReviewService service = new CentralReviewService(client, "http://llm.test/api/ai/review", new ObjectMapper());
+        AgentReviewController.AgentReviewRequest request = new AgentReviewController.AgentReviewRequest(
+                4L, "CodeOps review", "pre-push", "github.com/acme/service", "master", "head", "base",
+                List.of(new AgentReviewController.AgentFileRequest("src/App.java", "M", 1, 0, "+class App {}", null)),
+                List.of());
+
+        assertThatThrownBy(() -> service.review(request, "HIGH"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("LLM service returned HTTP 503 (PROVIDER_5XX)");
+    }
+
+    @Test
     void allowsTheLlmServiceSixHundredSecondsToReturnAReview() throws Exception {
         HttpClient client = mock(HttpClient.class);
         @SuppressWarnings("unchecked")

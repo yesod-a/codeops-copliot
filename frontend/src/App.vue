@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { cancelReviewTask, deleteProject, getAiHealth, getCurrentUser, getReviewDetails, getReviewTask, importProject, listProjects, listReviewTasks, listReviews, login, logout, readSelectedGitFiles, registerCentralProject, retryReviewTask, saveReview, scanRepository, submitAiReview, updateProjectPolicy } from './api/reviewApi.js';
+import { cancelReviewTask, createReviewTaskEventSource, deleteProject, getAiHealth, getCurrentUser, getReviewDetails, getReviewTask, getTaskExecution, importProject, listProjects, listReviewTasks, listReviews, login, logout, readSelectedGitFiles, registerCentralProject, retryReviewTask, saveReview, scanRepository, submitAiReview, updateProjectPolicy, getObservabilityOverview, getObservabilityQueue, getObservabilityTimeseries } from './api/reviewApi.js';
 import FindingList from './components/FindingList.vue';
 import ReviewForm from './components/ReviewForm.vue';
 import ReviewStatus from './components/ReviewStatus.vue';
@@ -8,6 +8,7 @@ import RuleCenter from './components/RuleCenter.vue';
 import UserManagement from './components/UserManagement.vue';
 import { calculateRiskScore, demoTask, getFindingCounts, getFindingText, getStatusMeta } from './reviewState.js';
 import { getHistoryId, getRoute, getTaskId } from './navigation.js';
+import { formatCost, formatDuration, formatTokens, percentage } from './observabilityState.js';
 
 const task = ref(structuredClone(demoTask));
 const activeFilter = ref('ALL');
@@ -29,6 +30,12 @@ const taskDetail = ref(null);
 const taskDetailLoading = ref(false);
 const taskDetailError = ref('');
 const taskDetailId = ref(null);
+const taskExecution = ref([]);
+const observability = ref({ taskCount: 0, successfulTaskCount: 0, failedTaskCount: 0, llmCallCount: 0, llmTokenCount: 0, totalDurationMs: 0 });
+const observabilityQueue = ref({ depth: 0, pendingOutbox: 0 });
+const observabilitySeries = ref([]);
+const observabilityLoading = ref(false);
+const observabilityError = ref('');
 const taskPage = ref(0);
 const taskTotalPages = ref(1);
 const historyDetailLoading = ref(false);
@@ -45,6 +52,7 @@ const historyPage = ref(1);
 const pageSize = 10;
 const projectPageSize = 3;
 let pollingTimer;
+let taskEventSource;
 const currentUser = ref(null);
 const authLoading = ref(true);
 const loginLoading = ref(false);
@@ -156,26 +164,69 @@ function openTask(taskId) {
   window.location.hash = `tasks/${encodeURIComponent(taskId)}`;
 }
 
-function scheduleTaskDetailPoll(id) {
+function scheduleTaskDetailPoll(id, delay = 10000) {
   window.clearTimeout(pollingTimer);
   if (!taskDetail.value || !isTaskActive(taskDetail.value.status)) return;
   pollingTimer = window.setTimeout(() => {
     if (getRoute(window.location.hash) === 'task-detail' && getTaskId(window.location.hash) === id) loadTaskDetail(id);
-  }, 2500);
+  }, delay);
 }
 
-async function loadTaskDetail(id) {
+function closeTaskEventSource() {
+  if (taskEventSource) taskEventSource.close();
+  taskEventSource = null;
+}
+
+function openTaskEventSource(id) {
+  closeTaskEventSource();
+  if (typeof EventSource === 'undefined') {
+    scheduleTaskDetailPoll(id);
+    return;
+  }
+  taskEventSource = createReviewTaskEventSource(id);
+  taskEventSource.addEventListener('task.updated', async () => {
+    try {
+      await loadTaskDetail(id, { connect: false });
+    } catch {
+      scheduleTaskDetailPoll(id);
+    }
+  });
+  taskEventSource.onerror = () => scheduleTaskDetailPoll(id);
+}
+
+async function loadTaskDetail(id, { connect = true } = {}) {
   taskDetailId.value = id;
   taskDetailLoading.value = true;
   taskDetailError.value = '';
   try {
     taskDetail.value = await getReviewTask(id);
-    scheduleTaskDetailPoll(id);
+    taskExecution.value = (await getTaskExecution(id).catch(() => ({ events: [] }))).events ?? [];
+    if (isTaskActive(taskDetail.value.status)) {
+      if (connect) openTaskEventSource(id);
+    } else {
+      window.clearTimeout(pollingTimer);
+      closeTaskEventSource();
+    }
   } catch (error) {
     taskDetailError.value = error.message || '无法加载评审任务详情。';
   } finally {
     taskDetailLoading.value = false;
   }
+}
+
+async function loadObservability() {
+  observabilityLoading.value = true;
+  observabilityError.value = '';
+  try {
+    const [overview, queue, series] = await Promise.all([
+      getObservabilityOverview(), getObservabilityQueue(), getObservabilityTimeseries({ metric: 'tasks' })
+    ]);
+    observability.value = overview;
+    observabilityQueue.value = queue;
+    observabilitySeries.value = series ?? [];
+  } catch (error) {
+    observabilityError.value = error.message || '无法加载运行监控。';
+  } finally { observabilityLoading.value = false; }
 }
 
 function syncRoute() {
@@ -186,9 +237,13 @@ function syncRoute() {
     return;
   }
   route.value = nextRoute;
-  if (route.value !== 'task-detail') window.clearTimeout(pollingTimer);
+  if (route.value !== 'task-detail') {
+    window.clearTimeout(pollingTimer);
+    closeTaskEventSource();
+  }
   if (route.value === 'history') loadReviewHistory();
   if (route.value === 'tasks') loadReviewTasks();
+  if (route.value === 'observability') loadObservability();
   if (route.value === 'task-detail') {
     const id = getTaskId(window.location.hash);
     if (id && id !== taskDetailId.value) loadTaskDetail(id);
@@ -408,6 +463,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   window.clearTimeout(pollingTimer);
+  closeTaskEventSource();
   window.removeEventListener('hashchange', syncRoute);
 });
 
@@ -485,6 +541,7 @@ async function handleLogout() {
         <a class="nav-item" :class="{ active: route === 'projects' }" href="#projects"><span class="nav-icon">▦</span>项目</a>
         <a class="nav-item" :class="{ active: route === 'history' || route === 'history-detail' }" href="#history"><span class="nav-icon">◷</span>历史记录</a>
         <a class="nav-item" :class="{ active: route === 'tasks' }" href="#tasks"><span class="nav-icon">◌</span>评审任务</a>
+        <a class="nav-item" :class="{ active: route === 'observability' }" href="#observability"><span class="nav-icon">▥</span>运行监控</a>
         <a class="nav-item" :class="{ active: route === 'rules' }" href="#rules"><span class="nav-icon">☷</span>评审规则</a>
         <a v-if="currentUser?.role === 'ADMIN'" class="nav-item" :class="{ active: route === 'users' }" href="#users"><span class="nav-icon">♙</span>用户管理</a>
         <p class="nav-label nav-label-spaced">系统</p>
@@ -501,11 +558,24 @@ async function handleLogout() {
 
     <main class="main-content" id="review">
       <header class="topbar">
-        <div class="breadcrumb"><span>工作区</span><b>/</b><strong>{{ route === 'review' ? '评审工作台' : route === 'projects' ? '项目' : route === 'rules' ? '评审规则' : route === 'users' ? '用户管理' : route === 'tasks' ? '评审任务' : route === 'history-detail' ? '评审详情' : '历史记录' }}</strong></div>
+          <div class="breadcrumb"><span>工作区</span><b>/</b><strong>{{ route === 'review' ? '评审工作台' : route === 'projects' ? '项目' : route === 'rules' ? '评审规则' : route === 'users' ? '用户管理' : route === 'tasks' ? '评审任务' : route === 'observability' ? '运行监控' : route === 'history-detail' ? '评审详情' : '历史记录' }}</strong></div>
           <div class="topbar-actions"><span class="connection-pill"><span class="pulse-dot"></span>{{ connectionMessage }}</span><button class="icon-button" title="帮助">?</button><span class="avatar small">{{ currentUser?.displayName?.slice(0, 2) || 'U' }}</span></div>
       </header>
 
-      <div v-if="route === 'review'" class="content-wrap">
+      <div v-if="route === 'observability'" class="content-wrap observability-page">
+        <section class="page-intro"><div><p class="eyebrow">异步执行</p><h1>运行监控</h1><p class="intro-copy">查看评审任务、LLM 调用、工具调用和队列运行状态。</p></div><button class="secondary-button" type="button" @click="loadObservability">刷新</button></section>
+        <p v-if="observabilityError" class="notice-banner"><span>!</span>{{ observabilityError }}</p>
+        <p v-else-if="observabilityLoading" class="scan-message">正在加载运行指标...</p>
+        <section class="metrics-grid observability-metrics">
+          <div class="metric-card"><div class="metric-label">评审任务</div><strong>{{ observability.taskCount }}</strong><div class="metric-foot"><span class="trend positive">完成 {{ percentage(observability.successfulTaskCount, observability.taskCount) }}</span><span>近 7 天</span></div></div>
+          <div class="metric-card"><div class="metric-label">失败任务</div><strong>{{ observability.failedTaskCount }}</strong><div class="metric-foot"><span class="trend warning">失败率 {{ percentage(observability.failedTaskCount, observability.taskCount) }}</span><span>需关注</span></div></div>
+          <div class="metric-card"><div class="metric-label">LLM 调用</div><strong>{{ observability.llmCallCount }}</strong><div class="metric-foot"><span class="trend">{{ formatTokens(observability.llmTokenCount) }} tokens</span><span>累计</span></div></div>
+          <div class="metric-card"><div class="metric-label">总耗时</div><strong>{{ formatDuration(observability.totalDurationMs) }}</strong><div class="metric-foot"><span class="trend">队列 {{ observabilityQueue.depth }}</span><span>积压</span></div></div>
+        </section>
+        <section class="workspace-grid observability-grid"><div class="panel"><div class="panel-heading"><div><p class="eyebrow">队列状态</p><h2>消息处理</h2></div></div><div class="detail-meta-grid"><div><span>评审队列</span><strong>{{ observabilityQueue.depth }}</strong></div><div><span>Outbox 待发布</span><strong>{{ observabilityQueue.pendingOutbox }}</strong></div></div></div><div class="panel"><div class="panel-heading"><div><p class="eyebrow">小时趋势</p><h2>任务执行</h2></div></div><div v-if="observabilitySeries.length" class="observability-series"><div v-for="point in observabilitySeries" :key="point.bucket" class="series-row"><time>{{ new Date(point.bucket).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit' }) }}</time><span>{{ point.count }} 个任务</span><strong>{{ formatDuration(point.durationMs) }}</strong></div></div><p v-else class="muted-copy">暂无执行数据。</p></div></section>
+      </div>
+
+      <div v-else-if="route === 'review'" class="content-wrap">
         <section class="page-intro">
           <div><p class="eyebrow">2026 年 09 月 02 日</p><h1>代码评审工作台</h1><p class="intro-copy">把每一次代码变更，变成可追踪的工程质量信号。</p></div>
           <button class="secondary-button" type="button" @click="loadDemo"><span>↻</span>载入示例</button>
@@ -634,6 +704,7 @@ async function handleLogout() {
             <div class="detail-meta-grid"><div><span>整体进度</span><strong>{{ taskDetail.completedGroups }} / {{ taskDetail.totalGroups }} 组</strong></div><div><span>当前分组</span><strong>{{ taskDetail.currentGroup ? `第 ${taskDetail.currentGroup} 组` : '-' }}</strong></div><div><span>重试次数</span><strong>{{ taskDetail.retryCount }}</strong></div><div><span>分支</span><strong>{{ taskDetail.branch || '-' }}</strong></div><div><span>提交</span><strong class="mono-value">{{ taskDetail.headCommit?.slice(0, 12) || '-' }}</strong></div><div><span>更新时间</span><strong>{{ taskDetail.completedAt || taskDetail.startedAt || taskDetail.createdAt ? new Date(taskDetail.completedAt || taskDetail.startedAt || taskDetail.createdAt).toLocaleString('zh-CN') : '-' }}</strong></div></div>
             <div v-if="taskDetail.errorMessage" class="task-error">{{ taskDetail.errorMessage }}</div>
           </section>
+          <section class="panel execution-timeline"><div class="section-heading"><div><p class="eyebrow">可观测性</p><h2>执行明细</h2></div><span class="muted-copy">{{ taskExecution.length }} 个事件</span></div><div v-if="taskExecution.length" class="timeline-list"><div v-for="(event, index) in taskExecution" :key="`${event.createdAt}-${index}`" class="timeline-row"><span class="timeline-dot" :class="`tone-${taskStatusTone(event.status)}`"></span><div><strong>{{ event.operation }}</strong><span>{{ event.eventType }} · {{ event.status }}<template v-if="event.groupNumber"> · 第 {{ event.groupNumber }} 组</template></span></div><time>{{ event.durationMs != null ? formatDuration(event.durationMs) : '-' }}</time></div></div><p v-else class="muted-copy">暂无执行事件，任务开始后会显示。</p></section>
           <section class="task-groups"><div class="section-heading"><div><p class="eyebrow">执行拆分</p><h2>评审分组</h2></div><span class="muted-copy">{{ taskDetailFindings.length }} 个已发现问题</span></div><article v-for="group in taskDetail.groups" :key="group.groupNumber" class="task-group panel"><div class="task-group-heading"><div><strong>第 {{ group.groupNumber }} 组</strong><span>{{ group.files.length }} 个文件 · 尝试 {{ group.attemptCount }} 次</span></div><span class="status-badge" :class="`tone-${taskStatusTone(group.status)}`"><span class="status-dot"></span>{{ taskGroupStatusLabel(group.status) }}</span></div><div class="task-group-files"><code v-for="file in group.files" :key="file.path">{{ file.path }}</code></div><p v-if="group.errorMessage" class="task-error">{{ group.errorMessage }}</p><div v-if="group.findings.length && taskDetail.status !== 'COMPLETED'" class="task-group-findings"><strong>本组问题 {{ group.findings.length }} 个</strong><FindingList v-model="activeFilter" :findings="group.findings" /></div><p v-else-if="!group.findings.length && group.status === 'COMPLETED'" class="task-no-findings">本组未发现问题。</p></article></section>
           <FindingList v-if="taskDetailFindings.length" v-model="activeFilter" :findings="taskDetailFindings" />
         </template>

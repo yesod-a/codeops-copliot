@@ -2,6 +2,7 @@ package com.codeops.copilot.review.tasks;
 
 import com.codeops.copilot.review.persistence.ReviewHistoryService;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -16,10 +17,19 @@ public class ReviewTaskService {
 
     private final ReviewTaskRepository taskRepository;
     private final ReviewOutboxEventRepository outboxEventRepository;
+    private final ReviewTaskEventPublisher taskEvents;
 
-    public ReviewTaskService(ReviewTaskRepository taskRepository, ReviewOutboxEventRepository outboxEventRepository) {
+    @Autowired
+    public ReviewTaskService(ReviewTaskRepository taskRepository, ReviewOutboxEventRepository outboxEventRepository,
+                             ReviewTaskEventPublisher taskEvents) {
         this.taskRepository = taskRepository;
         this.outboxEventRepository = outboxEventRepository;
+        this.taskEvents = taskEvents;
+    }
+
+    /** Constructor retained for focused unit tests. */
+    public ReviewTaskService(ReviewTaskRepository taskRepository, ReviewOutboxEventRepository outboxEventRepository) {
+        this(taskRepository, outboxEventRepository, null);
     }
 
     @Transactional
@@ -77,6 +87,7 @@ public class ReviewTaskService {
     public ReviewTaskEntity cancel(String taskId) {
         ReviewTaskEntity task = get(taskId);
         task.requestCancellation();
+        publish(task, "CANCEL_REQUESTED");
         return task;
     }
 
@@ -84,10 +95,16 @@ public class ReviewTaskService {
     public ReviewTaskEntity retry(String taskId) {
         ReviewTaskEntity task = get(taskId);
         task.requeue();
-        task.getGroups().stream().filter(group -> group.getStatus() != ReviewTaskGroupStatus.COMPLETED).forEach(ReviewTaskGroupEntity::queue);
+        task.getGroups().forEach(ReviewTaskGroupEntity::resetForManualRetry);
         outboxEventRepository.save(new ReviewOutboxEventEntity(UUID.randomUUID().toString(), task.getId(), QUEUED_EVENT,
                 "{\"taskId\":\"" + task.getId() + "\"}"));
+        publish(task, "REQUEUED");
         return task;
+    }
+
+    private void publish(ReviewTaskEntity task, String type) {
+        if (taskEvents != null) taskEvents.publishAfterCommit(new ReviewTaskEvent(task.getId(), type,
+                task.getStatus().name(), task.getCurrentGroup(), task.getCompletedGroups(), task.getTotalGroups()));
     }
 
     public record CreateTaskCommand(long projectId, String requestedByUserId, String repositoryKey, String title,

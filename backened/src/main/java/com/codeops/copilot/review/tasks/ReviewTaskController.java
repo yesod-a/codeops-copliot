@@ -8,7 +8,12 @@ import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.codeops.copilot.review.agent.AgentReviewController;
+import com.codeops.copilot.review.observability.ObservabilityView;
+import com.codeops.copilot.review.observability.ReviewExecutionEventService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -20,9 +25,41 @@ public class ReviewTaskController {
     private final ReviewTaskService taskService;
     private final AgentAccessService accessService;
     private final ObjectMapper objectMapper;
+    private final ReviewTaskEventStream eventStream;
+    @Autowired(required = false)
+    private ReviewExecutionEventService executionEvents;
 
-    public ReviewTaskController(ReviewTaskService taskService, AgentAccessService accessService, ObjectMapper objectMapper) {
+    @Autowired
+    public ReviewTaskController(ReviewTaskService taskService, AgentAccessService accessService, ObjectMapper objectMapper,
+                                ReviewTaskEventStream eventStream) {
         this.taskService = taskService; this.accessService = accessService; this.objectMapper = objectMapper;
+        this.eventStream = eventStream;
+    }
+
+    /** Constructor retained for focused controller tests. */
+    public ReviewTaskController(ReviewTaskService taskService, AgentAccessService accessService, ObjectMapper objectMapper) {
+        this(taskService, accessService, objectMapper, new ReviewTaskEventStream());
+    }
+
+    @GetMapping("/{taskId}/execution")
+    public ObservabilityView.ExecutionTimeline execution(@PathVariable String taskId,
+                                                          @RequestHeader(value = "Authorization", required = false) String authorization,
+                                                          HttpSession session) {
+        AgentAccessService.Principal principal = principal(authorization, session);
+        ReviewTaskEntity task = taskService.get(taskId);
+        authorize(principal, task);
+        var timeline = executionEvents == null ? List.<ObservabilityView.ExecutionEvent>of() : executionEvents.timeline(taskId).stream().map(ObservabilityView.ExecutionEvent::from).toList();
+        return new ObservabilityView.ExecutionTimeline(taskId, timeline);
+    }
+
+    @GetMapping(value = "/{taskId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter events(@PathVariable String taskId,
+                             @RequestHeader(value = "Authorization", required = false) String authorization,
+                             HttpSession session) {
+        AgentAccessService.Principal principal = principal(authorization, session);
+        ReviewTaskEntity task = taskService.get(taskId);
+        authorize(principal, task);
+        return eventStream.subscribe(taskId);
     }
 
     @GetMapping

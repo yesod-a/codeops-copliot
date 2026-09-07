@@ -1,5 +1,11 @@
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
 
+export function createReviewTaskEventSource(taskId) {
+  return new EventSource(`${API_BASE}/api/review-tasks/${encodeURIComponent(taskId)}/events`, {
+    withCredentials: true
+  });
+}
+
 async function request(path, options = {}) {
   const { timeoutMs = 2000, ...fetchOptions } = options;
   const controller = new AbortController();
@@ -196,4 +202,28 @@ export function deleteReview(id) {
 
 export function getAiHealth() {
   return request('/api/ai/health');
+}
+
+export function getObservabilityOverview(params = {}) {
+  const query = new URLSearchParams();
+  if (params.projectId) query.set('projectId', params.projectId);
+  if (params.from) query.set('from', params.from);
+  if (params.to) query.set('to', params.to);
+  return request(`/api/observability/overview?${query}`, { timeoutMs: 10000 });
+}
+
+export function getObservabilityTimeseries(params = {}) {
+  const query = new URLSearchParams({ metric: params.metric ?? 'tasks' });
+  if (params.projectId) query.set('projectId', params.projectId);
+  if (params.from) query.set('from', params.from);
+  if (params.to) query.set('to', params.to);
+  return request(`/api/observability/timeseries?${query}`, { timeoutMs: 10000 });
+}
+
+export function getObservabilityQueue() {
+  return request('/api/observability/queue', { timeoutMs: 10000 });
+}
+
+export function getTaskExecution(taskId) {
+  return request(`/api/review-tasks/${encodeURIComponent(taskId)}/execution`, { timeoutMs: 10000 });
 }

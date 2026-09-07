@@ -132,6 +132,12 @@ POST   /api/reviews
 GET    /api/reviews?limit=20&offset=0
 GET    /api/reviews/{id}
 DELETE /api/reviews/{id}
+GET    /api/observability/overview
+GET    /api/observability/timeseries
+GET    /api/observability/queue
+GET    /api/review-tasks/{taskId}/execution
 ```
 
 `/api/ai/*` is provided by the LangChain service on its internal port `8090`. In central mode Java on its internal port `8080` additionally authenticates local clients, calls the LLM service, applies project blocking policy, and persists review history. Only the frontend port is required for normal browser and hook access.
+
+运行监控页面读取上述观测 API。Java 同时暴露 `/actuator/health` 和 `/actuator/prometheus`；默认 Compose 不启动 Prometheus，需要时执行 `docker compose --profile observability up -d`。事件默认保留 90 天，可通过 `CODEOPS_OBSERVABILITY_EVENT_RETENTION_DAYS` 配置。

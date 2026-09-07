@@ -14,6 +14,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Map;
 
 @Service
@@ -49,11 +51,19 @@ public class CentralReviewService {
     public String aiUrl() { return aiUrl; }
 
     public ReviewOutcome review(AgentReviewController.AgentReviewRequest request, String failOnSeverity) {
+        return review(request, failOnSeverity, null, null);
+    }
+
+    /** Correlation-aware variant used by asynchronous workers. */
+    public ReviewOutcome review(AgentReviewController.AgentReviewRequest request, String failOnSeverity,
+                                String taskId, Integer groupNumber) {
         try {
-            Map<String, Object> payload = Map.of(
-                    "repository", request.repositoryKey() == null ? "project-" + request.projectId() : request.repositoryKey(),
-                    "title", request.title(),
-                    "files", request.files().stream().map(file -> Map.of("path", file.path(), "content", file.patch() == null ? "" : file.patch())).toList());
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("repository", request.repositoryKey() == null ? "project-" + request.projectId() : request.repositoryKey());
+            payload.put("title", request.title());
+            payload.put("files", request.files().stream().map(file -> Map.of("path", file.path(), "content", file.patch() == null ? "" : file.patch())).toList());
+            if (taskId != null && !taskId.isBlank()) payload.put("task_id", taskId);
+            if (groupNumber != null) payload.put("group_number", groupNumber);
             HttpRequest httpRequest = HttpRequest.newBuilder(URI.create(aiUrl))
                     .timeout(Duration.ofSeconds(600))
                     .header("Content-Type", "application/json")
@@ -61,8 +71,12 @@ public class CentralReviewService {
                     .build();
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() / 100 != 2) {
-                throw new IllegalStateException("LLM service returned HTTP " + response.statusCode()
-                        + ": " + summarizeError(response.body()));
+                String errorCode = response.headers() == null ? null
+                        : response.headers().firstValue("X-CodeOps-Error-Code").orElse(null);
+                String detail = response.statusCode() >= 500
+                        ? " (" + (errorCode == null ? "UPSTREAM_5XX" : errorCode) + ")"
+                        : ": " + summarizeError(response.body());
+                throw new IllegalStateException("LLM service returned HTTP " + response.statusCode() + detail);
             }
             JsonNode findings = objectMapper.readTree(response.body()).path("findings");
             List<AgentReviewController.AgentFindingRequest> normalized = java.util.stream.StreamSupport.stream(findings.spliterator(), false)
@@ -74,13 +88,31 @@ public class CentralReviewService {
                             node.path("confidence").asDouble(0.8))).toList();
             boolean blocked = isBlocked(normalized, failOnSeverity);
             return new ReviewOutcome(normalized, blocked,
-                    blocked ? "存在达到项目阻断阈值的评审问题" : null);
+                    blocked ? "存在达到项目阻断阈值的评审问题" : null,
+                    parseMetrics(objectMapper.readTree(response.body()).path("metrics")));
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("中央 LLM 服务不可用", exception);
         } catch (IOException exception) {
             throw new IllegalStateException("中央 LLM 服务不可用", exception);
         }
+    }
+
+    private ReviewMetrics parseMetrics(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) return null;
+        List<ToolCallMetric> toolCalls = new ArrayList<>();
+        node.path("tool_calls").forEach(tool -> toolCalls.add(new ToolCallMetric(
+                tool.path("name").asText("unknown"), tool.path("duration_ms").asLong(0),
+                tool.path("status").asText("FAILED"), tool.path("error_code").isNull() ? null : tool.path("error_code").asText())));
+        Map<String, Long> phases = new HashMap<>();
+        node.path("phase_durations_ms").fields().forEachRemaining(entry -> phases.put(entry.getKey(), entry.getValue().asLong(0)));
+        return new ReviewMetrics(node.path("model").asText(null), node.path("duration_ms").isNumber() ? node.path("duration_ms").asLong() : null,
+                nullableLong(node, "input_tokens"), nullableLong(node, "output_tokens"), nullableLong(node, "total_tokens"),
+                node.path("estimated_cost").isNumber() ? node.path("estimated_cost").asDouble() : null, toolCalls, phases);
+    }
+
+    private Long nullableLong(JsonNode node, String field) {
+        return node.path(field).isNumber() ? node.path(field).asLong() : null;
     }
 
     public static boolean isBlocked(List<AgentReviewController.AgentFindingRequest> findings, String threshold) {
@@ -96,6 +128,14 @@ public class CentralReviewService {
     }
 
     public record ReviewOutcome(List<AgentReviewController.AgentFindingRequest> findings,
-                                boolean blocked, String blockReason) {
+                                boolean blocked, String blockReason, ReviewMetrics metrics) {
+        public ReviewOutcome(List<AgentReviewController.AgentFindingRequest> findings, boolean blocked, String blockReason) {
+            this(findings, blocked, blockReason, null);
+        }
     }
+
+    public record ReviewMetrics(String model, Long durationMs, Long inputTokens, Long outputTokens, Long totalTokens,
+                                Double estimatedCost, List<ToolCallMetric> toolCalls, Map<String, Long> phaseDurationsMs) { }
+
+    public record ToolCallMetric(String name, long durationMs, String status, String errorCode) { }
 }

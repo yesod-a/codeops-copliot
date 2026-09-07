@@ -12,16 +12,21 @@ import org.springframework.transaction.annotation.Transactional;
 public class ReviewOutboxPublisher {
     private final ReviewOutboxEventRepository events;
     private final RabbitTemplate rabbitTemplate;
+    private final QueueMetricsConfiguration queueMetrics;
 
-    public ReviewOutboxPublisher(ReviewOutboxEventRepository events, RabbitTemplate rabbitTemplate) {
+    public ReviewOutboxPublisher(ReviewOutboxEventRepository events, RabbitTemplate rabbitTemplate,
+                                 QueueMetricsConfiguration queueMetrics) {
         this.events = events;
         this.rabbitTemplate = rabbitTemplate;
+        this.queueMetrics = queueMetrics;
     }
 
     @Scheduled(fixedDelayString = "${codeops.review-queue.outbox-delay-ms:1000}")
     @Transactional
     public void publishPending() {
-        events.findByPublishedAtIsNullOrderByCreatedAtAsc(PageRequest.of(0, 50)).forEach(event -> {
+        var pending = events.findByPublishedAtIsNullOrderByCreatedAtAsc(PageRequest.of(0, 50));
+        queueMetrics.updatePendingOutbox(pending.size());
+        pending.forEach(event -> {
             try {
                 rabbitTemplate.convertAndSend(ReviewQueueConfiguration.EXCHANGE, ReviewQueueConfiguration.ROUTING_KEY,
                         event.getPayload());
@@ -30,5 +35,6 @@ public class ReviewOutboxPublisher {
                 event.markFailedAttempt();
             }
         });
+        queueMetrics.updatePendingOutbox((int) Math.min(Integer.MAX_VALUE, events.countByPublishedAtIsNull()));
     }
 }

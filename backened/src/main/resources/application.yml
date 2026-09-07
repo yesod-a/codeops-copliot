@@ -6,6 +6,15 @@ server:
         http-only: true
         same-site: lax
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      show-details: never
+
 spring:
   rabbitmq:
     host: ${SPRING_RABBITMQ_HOST:127.0.0.1}
@@ -28,6 +37,9 @@ spring:
 codeops:
   ai-url: ${CODEOPS_AI_URL:http://127.0.0.1:8090/api/ai/review}
   bootstrap-token: ${CODEOPS_BOOTSTRAP_TOKEN:change-me-in-production}
+  observability:
+    event-retention-days: ${CODEOPS_OBSERVABILITY_EVENT_RETENTION_DAYS:90}
+    retention-cron: ${CODEOPS_OBSERVABILITY_RETENTION_CRON:0 30 2 * * *}
   review-queue:
     exchange: ${CODEOPS_REVIEW_QUEUE_EXCHANGE:codeops.review}
     execute-queue: ${CODEOPS_REVIEW_QUEUE_EXECUTE:codeops.review.execute}

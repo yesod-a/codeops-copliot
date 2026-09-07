@@ -177,3 +177,29 @@ def test_small_group_plan_is_based_on_size_not_file_count():
     files = [ReviewFile(path=f"{index}.java", content="diff") for index in range(8)]
 
     assert build_review_plan(files).startswith("小变更")
+
+
+class TransientFailureModel(FakeModel):
+    def invoke(self, messages):
+        self.calls += 1
+        if self.calls == 1:
+            error = RuntimeError("upstream returned HTTP 503 Service Unavailable")
+            error.status_code = 503
+            raise error
+        return type("Message", (), {"content": self.content, "tool_calls": []})()
+
+
+def test_reviewer_retries_transient_provider_failures():
+    model = TransientFailureModel(json.dumps({"findings": []}))
+    settings = Settings(
+        ai_enabled=True,
+        ai_api_key="test",
+        ai_model="test",
+        ai_provider_retries=1,
+        ai_retry_backoff_seconds=0,
+    )
+
+    assert AiReviewer(settings, model=model).review(
+        "D:/repo", "重试", [ReviewFile(path="src/App.java", content="diff")]
+    ) == []
+    assert model.calls == 2

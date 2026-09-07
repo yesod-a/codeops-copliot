@@ -1,4 +1,4 @@
-const routes = new Set(['review', 'projects', 'rules', 'users', 'history', 'tasks']);
+const routes = new Set(['review', 'projects', 'rules', 'users', 'history', 'tasks', 'observability']);
 
 export function getRoute(hash = '') {
   const route = hash.replace(/^#/, '').trim().replace(/\/+$/, '');

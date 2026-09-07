@@ -25,6 +25,7 @@ class ReviewTaskControllerTest {
     @Autowired MockMvc mockMvc;
     @MockBean ReviewTaskService taskService;
     @MockBean AgentAccessService accessService;
+    @MockBean ReviewTaskEventStream eventStream;
 
     @Test
     void returnsGroupsFilesAndCompletedFindingsForTaskDetails() throws Exception {

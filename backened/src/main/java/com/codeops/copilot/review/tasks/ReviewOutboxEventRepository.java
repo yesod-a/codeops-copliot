@@ -7,4 +7,5 @@ import java.util.List;
 
 public interface ReviewOutboxEventRepository extends JpaRepository<ReviewOutboxEventEntity, String> {
     List<ReviewOutboxEventEntity> findByPublishedAtIsNullOrderByCreatedAtAsc(Pageable pageable);
+    long countByPublishedAtIsNull();
 }

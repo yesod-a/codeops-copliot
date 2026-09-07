@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import logging
 
 from app.config import Settings
 from app.main import create_app
@@ -47,3 +48,24 @@ def test_review_endpoint_hides_provider_error_details():
 
     assert response.status_code == 503
     assert response.json()["detail"] == "LLM provider is unavailable"
+
+
+def test_review_endpoint_logs_safe_failure_context(caplog):
+    client = TestClient(create_app(Settings(ai_enabled=True, ai_model="test"), FailingReviewer()))
+
+    with caplog.at_level(logging.ERROR, logger="codeops.llm"):
+        response = client.post("/api/ai/review", json={
+            "repository": "D:/repo",
+            "title": "检查",
+            "task_id": "task-123",
+            "group_number": 2,
+            "files": [{"path": "src/App.java", "content": "class App {}"}],
+        })
+
+    assert response.status_code == 503
+    assert response.headers["X-CodeOps-Error-Code"] == "PROVIDER_UNAVAILABLE"
+    message = " ".join(record.getMessage() for record in caplog.records)
+    assert "task_id=task-123" in message
+    assert "group=2" in message
+    assert "files=1" in message
+    assert "provider unavailable" in message
